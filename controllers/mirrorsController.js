@@ -172,7 +172,7 @@ async function retry(fn, attempts = 3, delayMs = 800) {
 // Returns array of structured error objects; empty = project is ready to generate.
 function validateProjectFiles(proj) {
   const seenIds = new Set();
-  const errors  = [];
+  const errors = [];
   let validInfoCount = 0;
 
   for (const plan of (proj.cutting_plans || [])) {
@@ -218,10 +218,10 @@ export const generateOS = async (req, res) => {
     const dbRows = await fetchProjectsByIds(uniqueIds);
     const rowMap = new Map(dbRows.map(r => [r.id, r]));
 
-    const zip          = new JSZip();
-    const failures     = [];
+    const zip = new JSZip();
+    const failures = [];
     const fieldWarnings = [];
-    const reportLines  = [
+    const reportLines = [
       'RELATÓRIO DE GERAÇÃO DE OS',
       `Gerado em: ${new Date().toLocaleString('pt-BR')}`,
       `Total de OS: ${projects.length}`,
@@ -229,11 +229,11 @@ export const generateOS = async (req, res) => {
     ];
 
     for (const entry of projects) {
-      const proj       = rowMap.get(Number(entry.id));
-      const meta       = { osNumber: String(entry.os_number || entry.osNumber || '') };
+      const proj = rowMap.get(Number(entry.id));
+      const meta = { osNumber: String(entry.os_number || entry.osNumber || '') };
       const folderName = `OS-${meta.osNumber || entry.jiraKey}`;
       let attachmentIds = [];
-      let phase        = 'validação';
+      let phase = 'validação';
 
       const log = [
         '',
@@ -285,7 +285,7 @@ export const generateOS = async (req, res) => {
 
         // ── Fase 2b: páginas InfoProject ─────────────────────────────────────
         phase = 'mesclagem InfoProject';
-        const seenInfoIds  = new Set();
+        const seenInfoIds = new Set();
         let infoPagesTotal = 0;
 
         for (const plan of (proj.cutting_plans || [])) {
@@ -301,9 +301,9 @@ export const generateOS = async (req, res) => {
               throw new Error(`InfoProject "${infoAtt.file?.name}" não encontrado: ${infoAtt.file?.path}`);
             }
 
-            const bytes   = await retry(() => fs.promises.readFile(infoAtt.file.path));
+            const bytes = await retry(() => fs.promises.readFile(infoAtt.file.path));
             const infoPdf = await PDFDocument.load(bytes, { ignoreEncryption: true });
-            const copied  = await singlePdf.copyPages(infoPdf, infoPdf.getPageIndices());
+            const copied = await singlePdf.copyPages(infoPdf, infoPdf.getPageIndices());
             copied.forEach(p => singlePdf.addPage(p));
             infoPagesTotal += copied.length;
             log.push(`  [OK] InfoProject "${infoAtt.file.name}": ${copied.length} pág(s) incluída(s)`);
@@ -343,7 +343,7 @@ export const generateOS = async (req, res) => {
               continue;
             }
 
-            const content  = await retry(() => fs.promises.readFile(att.file.path, 'utf8'));
+            const content = await retry(() => fs.promises.readFile(att.file.path, 'utf8'));
             const destName = `${meta.osNumber}-${att.file.name}`;
             folder.file(destName, content.replace(/XXXXX/g, meta.osNumber));
             txtCount++;
@@ -373,15 +373,15 @@ export const generateOS = async (req, res) => {
         }
 
         const isTensylon = String(proj.material_type || '').toUpperCase() === 'TENSYLON';
-        const toJiraStr  = n => String(n).replace('.', ',');
-        const sqmFields  = {};
+        const toJiraStr = n => String(n).replace('.', ',');
+        const sqmFields = {};
 
         if (isTensylon) {
           const f = process.env.JIRA_FIELD_SQM_TENSYLON;
           if (f && sqm.tensylon != null) sqmFields[f] = toJiraStr(sqm.tensylon);
         } else {
-          if (sqm['8C']  != null) { const v = toJiraStr(sqm['8C']);  sqmFields.customfield_13625 = v; sqmFields.customfield_13633 = v; }
-          if (sqm['9C']  != null) { const v = toJiraStr(sqm['9C']);  sqmFields.customfield_13626 = v; sqmFields.customfield_13632 = v; }
+          if (sqm['8C'] != null) { const v = toJiraStr(sqm['8C']); sqmFields.customfield_13625 = v; sqmFields.customfield_13633 = v; }
+          if (sqm['9C'] != null) { const v = toJiraStr(sqm['9C']); sqmFields.customfield_13626 = v; sqmFields.customfield_13632 = v; }
           if (sqm['11C'] != null) { const v = toJiraStr(sqm['11C']); sqmFields.customfield_13627 = v; sqmFields.customfield_13631 = v; }
         }
 
@@ -480,7 +480,7 @@ export const getJiraFieldsList = async (req, res) => {
 
 // ─── PDF helpers ─────────────────────────────────────────────────────────────
 
-async function appendFirstPage(mergedPdf, project, meta, packageNumber) {
+export async function appendFirstPage(mergedPdf, project, meta, packageNumber) {
   const doc = await PDFDocument.create();
   const page = doc.addPage([595.28, 841.89]);
   const { width, height } = page.getSize();
@@ -552,9 +552,26 @@ async function appendFirstPage(mergedPdf, project, meta, packageNumber) {
   const lineHeight = 45;
   const fieldSize = 16;
 
+  const regras = [
+    ["B.E.V-TFM", "Full Tensylon"],
+    ["B.E.V-TPM", "Tensylon Parcial"],
+    ["B.E.V-M", "Padrão"],
+    ["TFM", "Full Tensylon"],
+    ["TPM", "Tensylon Parcial"],
+    ["M", "Padrão"],
+  ];
+
+  // encontra a regra
+  const regra = regras.find(([prefixo]) =>
+    (project.project || "").startsWith(prefixo)
+  );
+
+  // variável final com fallback
+  const kit = regra ? regra[1] : "-";
+
   const fields = [
-    ['Modelo:', project.model || '-'],
-    ['Kit:', project.brand || '-'],
+    ['Modelo:', project.model, project.brand || '-'],
+    ['Kit:', kit], 
     ['Tipo de teto:', project.roof_config || '-'],
     ['Projeto:', project.project || '-'],
     ['Data:', new Date().toLocaleDateString('pt-BR')],
@@ -660,7 +677,7 @@ async function appendFirstPage(mergedPdf, project, meta, packageNumber) {
 }
 
 
-async function appendLastPage(mergedPdf, project, meta) {
+export async function appendLastPage(mergedPdf, project, meta) {
   const doc = await PDFDocument.create();
   const page = doc.addPage([595.28, 841.89]);
   const { width, height } = page.getSize();
@@ -771,7 +788,7 @@ async function appendLastPage(mergedPdf, project, meta) {
   const info = [
     ['Modelo:', safe(project.model)],
     ['Projeto:', safe(project.project)],
-    ['Quantidade:', safe(project.total_parts_qty)],
+    ['Quantidade:', safe(project.lid_parts_qty)],
     ['OS:', safe(meta?.osNumber)],
   ];
 

@@ -1,0 +1,13 @@
+services:
+  maestro-backend:
+    build: .
+    container_name: maestro-backend
+    networks:
+      - maestro-network
+    ports:
+      - "3000:3000"
+    restart: always
+
+networks:
+  maestro-network:
+    external: true

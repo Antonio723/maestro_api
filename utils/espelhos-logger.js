@@ -1,13 +1,7 @@
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
-import { dirname } from 'path';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-// Caminho do arquivo de log
-const LOG_DIR = path.join(__dirname, '../logs');
+const LOG_DIR = process.env.LOG_DIR || path.join(process.cwd(), 'logs');
 const LOG_FILE = path.join(LOG_DIR, 'espelhos-gerados.txt');
 
 /**
