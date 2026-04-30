@@ -2,13 +2,20 @@ import axios from 'axios';
 import { decrypt } from '../utils/crypto.js';
 import pool from '../config/database.js';
 
-const CACHE_TTL_MS = 60_000; // 60 seconds
+const CACHE_TTL_MS = 10_000; // 10 seconds
 
 /**
  * In-memory cache keyed by string (userId or `userId:material`).
  * @type {Map<string, { data: JiraCard[], fetchedAt: number }>}
  */
-const cache = new Map();
+const cache    = new Map();
+
+/**
+ * In-flight requests: prevents thundering-herd when multiple callers
+ * hit an expired cache key simultaneously — they all await the same Promise.
+ * @type {Map<string, Promise<JiraCard[]>>}
+ */
+const inFlight = new Map();
 
 const JQL_ARAMIDA =
   `project = MANTA AND "fábrica de manta[dropdown]" = "CARBON OPACO" ` +
@@ -48,21 +55,10 @@ async function getCredentials(userId) {
 }
 
 /**
- * Core fetcher: runs a JQL query against Jira and caches the result.
- *
- * @param {number} userId
- * @param {string} jql
- * @param {string} cacheKey
- * @returns {Promise<JiraCard[]>}
+ * Internal: executes the Jira API call and populates the cache.
+ * Never called directly — always go through fetchByJql.
  */
-async function fetchByJql(userId, jql, cacheKey) {
-  const now    = Date.now();
-  const cached = cache.get(cacheKey);
-  if (cached && now - cached.fetchedAt < CACHE_TTL_MS) {
-    console.log(`[JiraService] cache hit for "${cacheKey}" (${cached.data.length} issues)`);
-    return cached.data;
-  }
-
+async function _doFetch(userId, jql, cacheKey) {
   const jiraUrl = process.env.JIRA_URL;
   if (!jiraUrl) {
     console.warn('[JiraService] JIRA_URL not set — returning empty list');
@@ -91,9 +87,32 @@ async function fetchByJql(userId, jql, cacheKey) {
   } while (nextPageToken);
 
   const normalized = allRaw.map(normalizeIssue);
-  cache.set(cacheKey, { data: normalized, fetchedAt: now });
+  cache.set(cacheKey, { data: normalized, fetchedAt: Date.now() });
   console.log(`[JiraService] fetched ${normalized.length} issues for "${cacheKey}"`);
   return normalized;
+}
+
+/**
+ * Core fetcher: serves from cache when fresh; deduplicates concurrent
+ * requests that arrive while the cache is stale (thundering-herd guard).
+ *
+ * @param {number} userId
+ * @param {string} jql
+ * @param {string} cacheKey
+ * @returns {Promise<JiraCard[]>}
+ */
+async function fetchByJql(userId, jql, cacheKey) {
+  const cached = cache.get(cacheKey);
+  if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
+    console.log(`[JiraService] cache hit for "${cacheKey}" (${cached.data.length} issues)`);
+    return cached.data;
+  }
+
+  if (inFlight.has(cacheKey)) return inFlight.get(cacheKey);
+
+  const promise = _doFetch(userId, jql, cacheKey).finally(() => inFlight.delete(cacheKey));
+  inFlight.set(cacheKey, promise);
+  return promise;
 }
 
 /**

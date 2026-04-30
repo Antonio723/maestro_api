@@ -78,6 +78,7 @@ export async function fetchProjectsByIds(ids) {
       p.model,
       p.roof_config,
       p.total_parts_qty,
+      p.lid_parts_qty,
       COALESCE(
         json_agg(
           json_build_object(

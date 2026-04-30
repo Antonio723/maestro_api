@@ -1,6 +1,22 @@
 import { parseDimension, filterPlansByDimension } from '../utils/dimensionMatcher.js';
 import { validatePlans } from '../utils/reviewValidator.js';
 
+// Issues that block a project from being "ready" for OS generation.
+// Pending review issues (NO_LABELING, NO_KI_LAYOUT, etc.) are non-blocking:
+// they appear as tags on the ReadyCard but don't prevent OS generation.
+const BLOCKING_ISSUES = new Set([
+  'NO_ATTACHMENT',
+  'NO_CUTTING',
+  'NO_LABEL_8C',
+  'NO_LABEL_9C',
+  'NO_LABEL_11C',
+  'NO_LABEL_TENSYLON',
+]);
+
+function isBlocked(issues) {
+  return issues.some(code => BLOCKING_ISSUES.has(code));
+}
+
 /**
  * Determine whether a DB project is Tensylon.
  * material_type is the authoritative source; project code is the fallback.
@@ -70,10 +86,12 @@ function mergeItem(dbProject, card, plansOverride) {
  * noDimension  DB project found, but it has NO cutting_plan whose
  *              plate dimensions match the selected filter (Aramida only).
  *
- * PENDING      Matching plan(s) found, but at least one issue:
+ * PENDING      Matching plan(s) found, but at least one blocking issue:
  *              NO_ATTACHMENT | NO_CUTTING | NO_LABEL_8C | NO_LABEL_9C | NO_LABEL_11C | NO_LABEL_TENSYLON.
  *
- * READY        Matching plan(s) found, zero issues.
+ * READY        Matching plan(s) found, no blocking issues.
+ *              Non-blocking issues (NO_LABELING, NO_KI_LAYOUT, NO_NESTING_REPORT,
+ *              NO_FOLDER_TEMPLATE) are still surfaced as tags on the card.
  *
  * Tensylon:    Dimension filter is skipped entirely.  All plans are
  *              validated together; cards without a DB match go to missing.
@@ -137,8 +155,8 @@ export function classifyAll(jiraCards, dbProjects, dimensionStr, material) {
     if (isTensylonTab) {
       const issues  = validatePlans(allPlans);
       const enriched = mergeItem(dbProject, card);
-      if (issues.length === 0) {
-        ready.push(enriched);
+      if (!isBlocked(issues)) {
+        ready.push({ ...enriched, issues: issues.length ? issues : [] });
       } else {
         pending.push({ ...enriched, issues });
       }
@@ -167,8 +185,8 @@ export function classifyAll(jiraCards, dbProjects, dimensionStr, material) {
     ];
     const enriched = mergeItem(dbProject, card, reorderedPlans);
 
-    if (issues.length === 0) {
-      ready.push(enriched);
+    if (!isBlocked(issues)) {
+      ready.push({ ...enriched, issues: issues.length ? issues : [] });
     } else {
       pending.push({ ...enriched, issues });
     }

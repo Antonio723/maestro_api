@@ -603,7 +603,7 @@ export async function appendFirstPage(mergedPdf, project, meta, packageNumber) {
   const kit = regra ? regra[1] : "-";
 
   const fields = [
-    ['Modelo:', project.model, project.brand || '-'],
+    ['Modelo:', `${project.brand || ' '} ${project.model || '-'}`],
     ['Kit:', kit], 
     ['Tipo de teto:', project.roof_config || '-'],
     ['Projeto:', project.project || '-'],
