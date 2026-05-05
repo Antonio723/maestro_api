@@ -25,8 +25,10 @@ const pool = new Pool({
   max: 20, // Número máximo de conexões no pool
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 2000,
-  // Configurar schema padrão
-  options: '-c search_path=maestro,public'
+  // Schema padrão + fuso de Brasília na sessão (afeta now(), exibição de
+  // TIMESTAMPTZ e parse de strings sem fuso). TIMESTAMPTZ continua armazenado
+  // em UTC internamente — a TZ só muda apresentação e cálculos relativos.
+  options: '-c search_path=maestro,public -c timezone=America/Sao_Paulo'
 });
 
 // Teste de conexão
