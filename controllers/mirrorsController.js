@@ -345,7 +345,7 @@ async function collectTxtFiles(proj, meta, log) {
       }
 
       const content = await retry(() => fs.promises.readFile(att.file.path, 'utf8'));
-      const destName = `${meta.osNumber} ${att.file.name}`;
+      const destName = `${meta.osNumber} - ${att.file.name}`;
       entries.push({ name: destName, content: content.replace(/XXXXX/g, meta.osNumber) });
       log.push(`  [OK] TXT pronto: ${destName}`);
     }
