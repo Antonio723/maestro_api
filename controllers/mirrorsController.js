@@ -369,17 +369,22 @@ async function syncOsToJira(userId, entry, folderName, pdfBuffer, proj, meta, lo
   log.push(`  [OK] PDF anexado ao card Jira (IDs: ${attachmentIds.join(', ')})`);
 
   // 3b: campos m²
+  // Preserva o valor exatamente como cadastrado (ex.: "10.900" precisa ir como
+  // "10,900", não "10,9"). parseFloat só serve aqui para validar que a string é
+  // um número positivo — o valor enviado ao Jira é a string original.
   const sqm = {};
   for (const plan of (proj.cutting_plans || [])) {
     for (const [k, v] of Object.entries(plan.square_meters || {})) {
       if (sqm[k] !== undefined) continue;
-      const n = parseFloat(String(v ?? '').replace(',', '.'));
-      if (Number.isFinite(n) && n > 0) sqm[k] = n;
+      const raw = String(v ?? '').trim();
+      if (!raw) continue;
+      const n = parseFloat(raw.replace(',', '.'));
+      if (Number.isFinite(n) && n > 0) sqm[k] = raw;
     }
   }
 
   const isTensylon = String(proj.material_type || '').toUpperCase() === 'TENSYLON';
-  const toJiraStr = n => String(n).replace('.', ',');
+  const toJiraStr = s => String(s).replace('.', ',');
   const sqmFields = {};
 
   if (isTensylon) {
