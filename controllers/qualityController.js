@@ -176,7 +176,7 @@ export const generateCertificatePdf = async (req, res) => {
 // ─── PDF builder ──────────────────────────────────────────────────────────────
 async function buildCertificatePdf(cert) {
   const doc = await PDFDocument.create();
-  const page = doc.addPage([595.28, 841.89]);
+  const page = doc.addPage([841.89, 595.28]); // A4 landscape
   const { width, height } = page.getSize();
   const fontBold = await doc.embedFont(StandardFonts.HelveticaBold);
   const font = await doc.embedFont(StandardFonts.Helvetica);
@@ -214,7 +214,6 @@ async function buildCertificatePdf(cert) {
   }
 
   // ── "Kevlar GENUINE" badge top-right ─────────────────────────────────────
-  const badgeText = 'MADE WITH\nKevlar.\nGENUINE';
   const badgeLines = ['MADE WITH', 'Kevlar.', 'GENUINE'];
   let bx = width - ml - 90;
   let by = height - 42;
@@ -239,10 +238,11 @@ async function buildCertificatePdf(cert) {
     color: dark,
   });
 
-  // ── Fields ────────────────────────────────────────────────────────────────
-  const fieldY0 = lineY - 70;
+  // ── Fields — dois colunas para aproveitar largura horizontal ─────────────
+  const fieldY0 = lineY - 60;
   const labelSize = 10;
-  const rowGap = 21;
+  const rowGap = 20;
+  const col2X = width / 2 + 20;
 
   const produtos = Array.isArray(cert.produtos) ? cert.produtos : [];
   const produtoNomes = produtos.map(p => p.nome).join('; ');
@@ -252,28 +252,39 @@ async function buildCertificatePdf(cert) {
     ? new Date(cert.data_emissao).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })
     : '';
 
-  const fields = [
+  const leftFields = [
     ['Certificado:', cert.certificado || ''],
     ['Painéis Balísticos:', cert.paineis_balisticos || ''],
     ['Produto Ópera:', produtoNomes],
     ['Quantidade (m²):', produtoQtds],
+  ];
+
+  const rightFields = [
     ['Nota Fiscal:', cert.nota_fiscal || ''],
     ['Veículo:', cert.veiculo || ''],
     ['Data de Emissão:', dataEmissao],
   ];
 
-  let fy = fieldY0;
-  for (const [label, value] of fields) {
+  let lfY = fieldY0;
+  for (const [label, value] of leftFields) {
     const lw = fontBold.widthOfTextAtSize(label, labelSize);
-    page.drawText(label, { x: ml, y: fy, size: labelSize, font: fontBold, color: dark });
-    page.drawText(String(value), { x: ml + lw + 6, y: fy, size: labelSize, font, color: dark });
-    fy -= rowGap;
+    page.drawText(label, { x: ml, y: lfY, size: labelSize, font: fontBold, color: dark });
+    page.drawText(String(value), { x: ml + lw + 6, y: lfY, size: labelSize, font, color: dark });
+    lfY -= rowGap;
+  }
+
+  let rfY = fieldY0;
+  for (const [label, value] of rightFields) {
+    const lw = fontBold.widthOfTextAtSize(label, labelSize);
+    page.drawText(label, { x: col2X, y: rfY, size: labelSize, font: fontBold, color: dark });
+    page.drawText(String(value), { x: col2X + lw + 6, y: rfY, size: labelSize, font, color: dark });
+    rfY -= rowGap;
   }
 
   // ── Divider ───────────────────────────────────────────────────────────────
-  fy -= 8;
+  let fy = Math.min(lfY, rfY) - 12;
   page.drawLine({ start: { x: ml, y: fy }, end: { x: width - ml, y: fy }, thickness: 0.5, color: lightGray });
-  fy -= 20;
+  fy -= 18;
 
   // ── Body text ─────────────────────────────────────────────────────────────
   const material = cert.material || 'Dupont Kevlar® S745GR';
@@ -303,7 +314,7 @@ async function buildCertificatePdf(cert) {
     let y = startY;
     for (const line of lines) {
       page.drawText(line, { x: ml, y, size: bodySize, font: f, color: dark });
-      y -= 14;
+      y -= 13;
     }
     return y;
   };
@@ -321,11 +332,11 @@ async function buildCertificatePdf(cert) {
   // ── Guarantee badge (circle with number) ──────────────────────────────────
   fy -= 30;
   const cx = width / 2;
-  const radius = 28;
+  const radius = 26;
   page.drawCircle({ x: cx, y: fy, size: radius, color: dark });
 
   const numStr = String(cert.garantia_anos || 5);
-  const numSize = 26;
+  const numSize = 24;
   const numW = fontBold.widthOfTextAtSize(numStr, numSize);
   page.drawText(numStr, {
     x: cx - numW / 2,
@@ -335,14 +346,14 @@ async function buildCertificatePdf(cert) {
     color: white,
   });
 
-  fy -= radius + 16;
+  fy -= radius + 14;
   const gLabel = `GARANTIA ${cert.garantia_anos || 5} ANOS`;
   const gLabelSize = 11;
   const gLabelW = fontBold.widthOfTextAtSize(gLabel, gLabelSize);
   page.drawText(gLabel, { x: cx - gLabelW / 2, y: fy, size: gLabelSize, font: fontBold, color: dark });
 
   // ── Signature ─────────────────────────────────────────────────────────────
-  fy -= 55;
+  fy -= 48;
   const sigW = 160;
   const sigX = cx - sigW / 2;
   page.drawLine({ start: { x: sigX, y: fy }, end: { x: sigX + sigW, y: fy }, thickness: 1, color: dark });
@@ -353,7 +364,7 @@ async function buildCertificatePdf(cert) {
   page.drawText(sigLabel, { x: cx - sigLabelW / 2, y: fy, size: 9, font, color: dark });
 
   // ── Footer ────────────────────────────────────────────────────────────────
-  const footerLineY = 52;
+  const footerLineY = 40;
   page.drawLine({ start: { x: ml, y: footerLineY }, end: { x: width - ml, y: footerLineY }, thickness: 0.5, color: lightGray });
 
   const footerLines = [

@@ -384,7 +384,10 @@ async function syncOsToJira(userId, entry, folderName, pdfBuffer, proj, meta, lo
   }
 
   const isTensylon = String(proj.material_type || '').toUpperCase() === 'TENSYLON';
-  const toJiraStr = s => String(s).replace('.', ',');
+  const toJiraStr = s => {
+    const n = parseFloat(String(s).replace(',', '.'));
+    return Number.isFinite(n) ? n.toFixed(3).replace('.', ',') : String(s).replace('.', ',');
+  };
   const sqmFields = {};
 
   if (isTensylon) {
@@ -744,10 +747,13 @@ export async function appendFirstPage(mergedPdf, project, meta, packageNumber) {
   ];
 
   // Aggregate square_meters across all plans (first non-empty value per key)
+  // Always format with 3 decimal places so trailing zeros are preserved (e.g. 9.020).
   const sqm = {};
   for (const plan of (project.cutting_plans || [])) {
     for (const [k, v] of Object.entries(plan.square_meters || {})) {
-      if (v && String(v).trim() && sqm[k] === undefined) sqm[k] = String(v).trim();
+      if (v == null || String(v).trim() === '' || sqm[k] !== undefined) continue;
+      const n = parseFloat(String(v).replace(',', '.'));
+      sqm[k] = Number.isFinite(n) ? n.toFixed(3) : String(v).trim();
     }
   }
 
