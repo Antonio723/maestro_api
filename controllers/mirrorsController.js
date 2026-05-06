@@ -764,30 +764,42 @@ export async function appendFirstPage(mergedPdf, project, meta, packageNumber) {
     yPos -= lineHeight;
 
     // Consumption table immediately after OS field (Aramida only)
+    // Only render columns where sqm > 0; skip the table entirely if none.
     if (label === 'OS:' && !isTensylonProject) {
-      const consumoKeys = ['8C', '9C', '11C'];
-      const consumoColors = [rgb(0.08, 0.08, 0.95), rgb(0.1, 0.45, 0.13), rgb(0.95, 0.05, 0.05)];
-      const tableW = Math.min((width - marginLeft * 2) * 0.88, 520);
-      const colW = tableW / 3;
-      const hdrH = 30;
-      const valH = 26;
-      const labelY = yPos - 6;
-      const tableTopY = labelY - 10 - hdrH;
+      const allKeys   = ['8C', '9C', '11C'];
+      const allColors = [rgb(0.08, 0.08, 0.95), rgb(0.1, 0.45, 0.13), rgb(0.95, 0.05, 0.05)];
+      const activeCols = allKeys
+        .map((k, i) => ({ key: k, color: allColors[i] }))
+        .filter(({ key }) => {
+          const n = parseFloat(String(sqm[key] || '').replace(',', '.'));
+          return Number.isFinite(n) && n > 0;
+        });
 
-      page.drawText('Consumo (m²):', { x: marginLeft, y: labelY, size: fieldSize, font: fontBold, color: rgb(0, 0, 0) });
+      if (activeCols.length > 0) {
+        const tableW    = Math.min((width - marginLeft * 2) * 0.88, 520);
+        const colW      = tableW / activeCols.length;
+        const hdrH      = 30;
+        const valH      = 26;
+        const labelY    = yPos - 6;
+        const tableTopY = labelY - 10 - hdrH;
 
-      for (let i = 0; i < 3; i++) {
-        const cx = marginLeft + i * colW;
-        page.drawRectangle({ x: cx, y: tableTopY, width: colW, height: hdrH, color: consumoColors[i], borderColor: rgb(0, 0, 0), borderWidth: 1 });
-        drawCentered(consumoKeys[i], cx, tableTopY, colW, hdrH, 14, false, rgb(1, 1, 1));
+        page.drawText('Consumo (m²):', { x: marginLeft, y: labelY, size: fieldSize, font: fontBold, color: rgb(0, 0, 0) });
+
+        for (let i = 0; i < activeCols.length; i++) {
+          const { key, color } = activeCols[i];
+          const cx = marginLeft + i * colW;
+          page.drawRectangle({ x: cx, y: tableTopY, width: colW, height: hdrH, color, borderColor: rgb(0, 0, 0), borderWidth: 1 });
+          drawCentered(key, cx, tableTopY, colW, hdrH, 14, false, rgb(1, 1, 1));
+        }
+        const valY = tableTopY - valH;
+        for (let i = 0; i < activeCols.length; i++) {
+          const { key } = activeCols[i];
+          const cx = marginLeft + i * colW;
+          page.drawRectangle({ x: cx, y: valY, width: colW, height: valH, color: rgb(1, 1, 1), borderColor: rgb(0, 0, 0), borderWidth: 1 });
+          drawCentered(sqm[key], cx, valY, colW, valH, 13, false, rgb(0, 0, 0));
+        }
+        yPos = valY - 18;
       }
-      const valY = tableTopY - valH;
-      for (let i = 0; i < 3; i++) {
-        const cx = marginLeft + i * colW;
-        page.drawRectangle({ x: cx, y: valY, width: colW, height: valH, color: rgb(1, 1, 1), borderColor: rgb(0, 0, 0), borderWidth: 1 });
-        drawCentered(sqm[consumoKeys[i]] || '', cx, valY, colW, valH, 13, false, rgb(0, 0, 0));
-      }
-      yPos = valY - 18;
     }
   }
 
