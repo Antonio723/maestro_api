@@ -163,6 +163,128 @@ export async function ensureDatabaseCompatibility() {
   await ensureCronJobsTables();
   await ensureUserSecurityColumns();
   await ensureRbacTables();
+  await ensureProductionCardsTables();
+}
+
+async function ensureProductionCardsTables() {
+  // Mãe: registro único por card Jira (PK = jira_key). Contém campos comuns
+  // aos 5 boards de produção (VIDRO, ACO, MANTA, TENSYLON, SUP_VIDRO).
+  // numero_os = OS/PD (cf_10256) com fallback p/ PEDIDO CARBON (cf_10040).
+  await runCompatibilityQuery(`
+    CREATE TABLE IF NOT EXISTS maestro.production_cards (
+      jira_key          TEXT PRIMARY KEY,
+      material          TEXT NOT NULL CHECK (material IN ('VIDRO','ACO','MANTA','TENSYLON','SUP_VIDRO')),
+      project           TEXT,
+      tipo              TEXT,
+      resumo            TEXT,
+      status            TEXT,
+      situacao          TEXT,
+      numero_os         TEXT,
+      numero_projeto    TEXT,
+      veiculo           TEXT,
+      marca             TEXT,
+      modelo            TEXT,
+      ano_modelo        TEXT,
+      previsao_entrega  DATE,
+      produced_at       TIMESTAMPTZ,
+      last_synced_at    TIMESTAMPTZ,
+      created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at        TIMESTAMPTZ
+    )
+  `, 'maestro.production_cards');
+
+  await runCompatibilityQuery(`
+    CREATE INDEX IF NOT EXISTS production_cards_numero_os_idx
+      ON maestro.production_cards (numero_os)
+  `, 'production_cards_numero_os_idx');
+
+  await runCompatibilityQuery(`
+    CREATE INDEX IF NOT EXISTS production_cards_material_status_idx
+      ON maestro.production_cards (material, status)
+  `, 'production_cards_material_status_idx');
+
+  // Filha: VIDRO — board "FÁBRICA VIDRO" (projeto VIDRO).
+  await runCompatibilityQuery(`
+    CREATE TABLE IF NOT EXISTS maestro.producao_vidro (
+      jira_key             TEXT PRIMARY KEY REFERENCES maestro.production_cards(jira_key) ON DELETE CASCADE,
+      nf                   TEXT,
+      tipo_vidro           TEXT,
+      dt_recebimento       DATE,
+      blindagem            TEXT,
+      origem               TEXT,
+      motivo_rnc           TEXT,
+      liberado_producao_at DATE,
+      desenvolvimento_at   DATE,
+      em_producao_at       DATE,
+      produzido_at         DATE,
+      recebido_carbon_at   DATE,
+      data_nf              DATE,
+      updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `, 'maestro.producao_vidro');
+
+  // Filha: AÇO — board "FÁBRICA AÇO" (projeto ACO).
+  // Sem numero_projeto (não existe no board FÁBRICA AÇO).
+  await runCompatibilityQuery(`
+    CREATE TABLE IF NOT EXISTS maestro.producao_aco (
+      jira_key         TEXT PRIMARY KEY REFERENCES maestro.production_cards(jira_key) ON DELETE CASCADE,
+      pedido_carbon    TEXT,
+      nf               TEXT,
+      dt_criacao       DATE,
+      fornecedor_aco   TEXT,
+      inicio_producao  DATE,
+      em_producao_at   DATE,
+      produzido_at     DATE,
+      a_entregar_at    DATE,
+      updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `, 'maestro.producao_aco');
+
+  // Filha: MANTA — board "FÁBRICA DE MANTA - CARBON OPACO" (projeto MANTA).
+  await runCompatibilityQuery(`
+    CREATE TABLE IF NOT EXISTS maestro.producao_manta (
+      jira_key          TEXT PRIMARY KEY REFERENCES maestro.production_cards(jira_key) ON DELETE CASCADE,
+      pedido_carbon     TEXT,
+      fabrica_manta     TEXT,
+      m2_9c             TEXT,
+      m2_9c_real        TEXT,
+      jsw_p_manta       TEXT,
+      data_pedido       DATE,
+      dt_liberacao_ex   DATE,
+      data_ordenacao    DATE,
+      updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `, 'maestro.producao_manta');
+
+  // Filha: TENSYLON — board "FÁBRICA DE TENSYLON - CARBON OPACO" (projeto TENSYLON).
+  // Estrutura espelha a Manta (campos são os mesmos no Jira).
+  await runCompatibilityQuery(`
+    CREATE TABLE IF NOT EXISTS maestro.producao_tensylon (
+      jira_key          TEXT PRIMARY KEY REFERENCES maestro.production_cards(jira_key) ON DELETE CASCADE,
+      pedido_carbon     TEXT,
+      m2_9c             TEXT,
+      m2_9c_real        TEXT,
+      data_pedido       DATE,
+      dt_liberacao_ex   DATE,
+      data_ordenacao    DATE,
+      updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `, 'maestro.producao_tensylon');
+
+  // Filha: SUP_VIDRO — board "SUPORTE VIDRO" (projeto SVIDRO).
+  // FÁBRICA aqui = fornecedor terceiro do suporte (ex: THE MUNDO ELETRONICO).
+  await runCompatibilityQuery(`
+    CREATE TABLE IF NOT EXISTS maestro.producao_sup_vidro (
+      jira_key       TEXT PRIMARY KEY REFERENCES maestro.production_cards(jira_key) ON DELETE CASCADE,
+      pedido_carbon  TEXT,
+      os_pd          TEXT,
+      numero_projeto TEXT,
+      fabrica        TEXT,
+      cliente        TEXT,
+      dt_fase        DATE,
+      updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `, 'maestro.producao_sup_vidro');
 }
 
 async function ensureCronJobsTables() {
