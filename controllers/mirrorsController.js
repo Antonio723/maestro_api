@@ -480,7 +480,12 @@ async function syncOsToJira(userId, entry, folderName, pdfBuffer, proj, meta, lo
 // Processa uma entrada: valida → gera PDF → adiciona TXTs → sincroniza Jira.
 // Nunca lança — retorna { log, failure? }.
 async function processOsEntry(entry, proj, zip, req, fieldWarnings) {
-  const meta = { osNumber: String(entry.os_number || entry.osNumber || '') };
+  const meta = {
+    osNumber: String(entry.os_number || entry.osNumber || ''),
+    // Modelo/veículo vem direto do Jira (campo "Veiculo - Marca/Modelo"),
+    // pois um mesmo número de projeto pode atender modelos diferentes.
+    veiculo: String(entry.veiculo || '').trim(),
+  };
   const folderName = `OS-${meta.osNumber || entry.jiraKey}`;
   let phase = 'validação';
   let attachmentIds = [];
@@ -488,7 +493,7 @@ async function processOsEntry(entry, proj, zip, req, fieldWarnings) {
   const log = [
     '',
     `OS: ${meta.osNumber}  |  Card: ${entry.jiraKey}`,
-    `Projeto: ${proj?.project || '?'}  |  Modelo: ${proj?.model || '?'}`,
+    `Projeto: ${proj?.project || '?'}  |  Modelo: ${meta.veiculo || proj?.model || '?'}`,
     `Material: ${proj?.material_type || '?'}`,
     '',
   ];
@@ -968,9 +973,8 @@ export async function appendFirstPage(
   const fields = [
     [
       'Modelo:',
-      `${project.brand || ' '} ${
-        project.model || '-'
-      }`,
+      meta.veiculo ||
+        `${project.brand || ' '} ${project.model || '-'}`,
     ],
     ['Kit:', kit],
     ['Tipo de teto:', project.roof_config || '-'],
@@ -1134,7 +1138,7 @@ export async function appendFirstPage(
 
   // ── QR ────────────────────────────────────────────────────────────────────
   const qrPayload = [
-    project.model,
+    meta.veiculo || project.model,
     project.roof_config,
     project.project,
     meta.osNumber,
@@ -1432,7 +1436,7 @@ export async function appendLastPage(mergedPdf, project, meta) {
   const spacing = 6;
 
   const info = [
-    ['Modelo:', safe(project.model)],
+    ['Modelo:', safe(meta.veiculo || project.model)],
     ['Projeto:', safe(project.project)],
     ['Quantidade:', safe(project.lid_parts_qty)],
     ['OS:', safe(meta?.osNumber)],
