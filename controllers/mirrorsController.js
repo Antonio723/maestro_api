@@ -22,7 +22,7 @@ function formatVeiculo(value) {
   return String(value || '')
     .split(' - ')
     .slice(0, 2)
-    .join(' - ')
+    .join(' ')
     .trim();
 }
 
