@@ -114,6 +114,33 @@ export const getLiberadoEngenhariaProjects = async (req, res) => {
       result.noDimension = result.noDimension.filter(matches);
     }
 
+    // Enriquece cada card com as medidas em que a OS já foi gerada.
+    try {
+      const buckets = [result.ready, result.pending, result.missing, result.noDimension];
+      const keys = [...new Set(buckets.flat().map(it => it.jiraKey).filter(Boolean))];
+      if (keys.length) {
+        const { rows } = await pool.query(
+          `SELECT jira_key, dimension, material, generated_at
+             FROM maestro.os_generated_measure
+            WHERE jira_key = ANY($1::text[])
+            ORDER BY generated_at DESC`,
+          [keys],
+        );
+        const map = new Map();
+        for (const r of rows) {
+          if (!map.has(r.jira_key)) map.set(r.jira_key, []);
+          map.get(r.jira_key).push({ dimension: r.dimension, material: r.material, generatedAt: r.generated_at });
+        }
+        for (const bucket of buckets) {
+          for (const it of bucket) {
+            it.medidasGeradas = map.get(it.jiraKey) || [];
+          }
+        }
+      }
+    } catch (mErr) {
+      console.warn('[Mirrors] Falha ao carregar medidas geradas:', mErr.message);
+    }
+
     return res.json({ success: true, data: result });
   } catch (error) {
     console.error('[Mirrors] getLiberadoEngenhariaProjects error:', error);
@@ -652,6 +679,29 @@ export const generateOS = async (req, res) => {
       },
       entries: auditEntries,
     });
+
+    // Registra em qual medida (dimensão) a OS foi gerada por card — consumido
+    // pela tela "Liberado Engenharia". Não-fatal: nunca quebra a resposta.
+    try {
+      const medida = isTensylon ? 'TENSYLON' : String(dimension || '').trim();
+      if (medida) {
+        for (const s of successes) {
+          if (!s.jiraKey) continue;
+          await pool.query(
+            `INSERT INTO maestro.os_generated_measure (jira_key, os_number, project, material, dimension)
+             VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (jira_key, dimension)
+             DO UPDATE SET os_number    = EXCLUDED.os_number,
+                           project      = EXCLUDED.project,
+                           material     = EXCLUDED.material,
+                           generated_at = NOW()`,
+            [s.jiraKey, s.os_number || null, s.project_code || null, String(material || ''), medida],
+          );
+        }
+      }
+    } catch (mErr) {
+      console.warn('[Mirrors] Falha ao registrar medida gerada:', mErr.message);
+    }
 
     if (successCount === 0) {
       return res.status(422).json({ success: false, message: 'Todas as OS falharam ao ser geradas.', failures });

@@ -168,6 +168,30 @@ export async function ensureDatabaseCompatibility() {
   await ensureCronJobsTables();
   await ensureUserSecurityColumns();
   await ensureRbacTables();
+  await ensureOsGeneratedMeasureTable();
+}
+
+// Registra em qual medida (dimensão da chapa) + material a OS de cada card
+// foi gerada. Uma linha por (jira_key, dimension) — o card acumula as
+// medidas em que já foi gerado. Consumido pela tela "Liberado Engenharia".
+async function ensureOsGeneratedMeasureTable() {
+  await runCompatibilityQuery(`
+    CREATE TABLE IF NOT EXISTS maestro.os_generated_measure (
+      id           SERIAL PRIMARY KEY,
+      jira_key     TEXT NOT NULL,
+      os_number    TEXT,
+      project      TEXT,
+      material     TEXT,
+      dimension    TEXT NOT NULL,
+      generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT os_generated_measure_unique UNIQUE (jira_key, dimension)
+    )
+  `, 'maestro.os_generated_measure');
+
+  await runCompatibilityQuery(`
+    CREATE INDEX IF NOT EXISTS os_generated_measure_jira_idx
+      ON maestro.os_generated_measure (jira_key)
+  `, 'os_generated_measure_jira_idx');
 }
 
 async function ensureCronJobsTables() {
