@@ -14,6 +14,9 @@ import {
   // Fase 6
   getEffectivePermissions, bulkAssignRole,
 } from '../controllers/authController.js';
+import {
+  listCargos, createCargo, updateCargo, deleteCargo,
+} from '../controllers/cargosController.js';
 import { authenticate } from '../middleware/auth.js';
 import { requirePermission } from '../middleware/rbac.js';
 import { requireStepUp } from '../middleware/stepUp.js';
@@ -61,6 +64,13 @@ router.get('/users/:id/effective-permissions', authenticate, requirePermission('
 router.post('/users/bulk-assign-role', authenticate, requirePermission('user_access', 'manage'), bulkAssignRole);
 
 router.put('/users/:id', authenticate, requirePermission('users', 'update'), updateUser);
+
+// Cargos — catálogo gerenciado por admin (mesma permissão do gerenciamento de usuários).
+// Listagem permitida a qualquer autenticado para popular o dropdown no form de usuário.
+router.get('/cargos',         authenticate,                                              listCargos);
+router.post('/cargos',        authenticate, requirePermission('user_access', 'manage'), createCargo);
+router.put('/cargos/:id',     authenticate, requirePermission('user_access', 'manage'), updateCargo);
+router.delete('/cargos/:id',  authenticate, requirePermission('user_access', 'manage'), deleteCargo);
 
 // Role management
 router.get('/roles',      authenticate, requirePermission('roles', 'read'),   listRoles);

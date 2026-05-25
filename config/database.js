@@ -167,8 +167,73 @@ export async function ensureDatabaseCompatibility() {
   await ensureCronRunsTable();
   await ensureCronJobsTables();
   await ensureUserSecurityColumns();
+  await ensureCargosTable();
+  await ensureUserProfileColumns();
   await ensureRbacTables();
   await ensureOsGeneratedMeasureTable();
+}
+
+// Cargos (funções) catalogados — referenciados por users.cargo_id.
+// CRUD restrito a usuários com permissão "users:manage" / master.
+async function ensureCargosTable() {
+  await runCompatibilityQuery(`
+    CREATE TABLE IF NOT EXISTS maestro.cargos (
+      id         SERIAL PRIMARY KEY,
+      nome       VARCHAR(120) NOT NULL UNIQUE,
+      created_at TIMESTAMP NOT NULL DEFAULT now(),
+      updated_at TIMESTAMP NOT NULL DEFAULT now()
+    )
+  `, 'maestro.cargos');
+}
+
+// Identidade + cargo + expiração do token Jira no perfil do usuário.
+async function ensureUserProfileColumns() {
+  // username: login passa a ser por username em vez de email.
+  await runCompatibilityQuery(`
+    ALTER TABLE IF EXISTS maestro.users
+    ADD COLUMN IF NOT EXISTS username VARCHAR(60);
+  `, 'maestro.users.username');
+
+  // Backfill: usuários sem username herdam o prefixo do e-mail.
+  // Em caso de colisão entre prefixos iguais, anexa o id para garantir unicidade.
+  await runCompatibilityQuery(`
+    WITH backfill AS (
+      SELECT id,
+        CASE
+          WHEN ROW_NUMBER() OVER (
+            PARTITION BY lower(split_part(email, '@', 1))
+            ORDER BY id
+          ) = 1
+            THEN lower(split_part(email, '@', 1))
+          ELSE lower(split_part(email, '@', 1)) || '_' || id::text
+        END AS new_username
+      FROM maestro.users
+      WHERE username IS NULL
+    )
+    UPDATE maestro.users u
+    SET username = b.new_username
+    FROM backfill b
+    WHERE u.id = b.id;
+  `, 'maestro.users.username backfill');
+
+  await runCompatibilityQuery(`
+    CREATE UNIQUE INDEX IF NOT EXISTS users_username_unique
+      ON maestro.users (lower(username));
+  `, 'users_username_unique');
+
+  // Cargo referencia o catálogo. ON DELETE SET NULL para não impedir
+  // remoção de cargo que ainda esteja atribuído.
+  await runCompatibilityQuery(`
+    ALTER TABLE IF EXISTS maestro.users
+    ADD COLUMN IF NOT EXISTS cargo_id INTEGER REFERENCES maestro.cargos(id) ON DELETE SET NULL;
+  `, 'maestro.users.cargo_id');
+
+  // Expiração do token Jira informada manualmente pelo usuário ao salvar
+  // o token. Usado para banner "vence em N dias" / "vencido" no /auth/me.
+  await runCompatibilityQuery(`
+    ALTER TABLE IF EXISTS maestro.users
+    ADD COLUMN IF NOT EXISTS jira_token_expires_at DATE;
+  `, 'maestro.users.jira_token_expires_at');
 }
 
 // Registra em qual medida (dimensão da chapa) + material a OS de cada card

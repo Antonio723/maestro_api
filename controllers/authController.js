@@ -61,16 +61,50 @@ const decrypt = (text) => {
 const mapUser = (user) => ({
   id: user.id,
   name: user.name,
+  username: user.username || null,
   email: user.email,
+  cargoId: user.cargo_id ?? null,
+  cargoNome: user.cargo_nome ?? null,
   isMaster: user.is_master ?? false,
   idleTimeoutEnabled: user.idle_timeout_enabled ?? false,
   idleTimeoutMinutes: user.idle_timeout_minutes ?? 30,
   mustChangePassword: user.must_change_password ?? false,
   lastLoginAt: user.last_login_at || null,
+  jiraTokenExpiresAt: user.jira_token_expires_at || null,
   createdAt: user.created_at,
   updatedAt: user.updated_at,
   deletedAt: user.deleted_at || null,
 });
+
+/**
+ * Calcula status do token Jira para banner no front:
+ *   - missing:  sem token cadastrado
+ *   - unknown:  token presente mas sem data de expiração informada
+ *   - expired:  expires_at no passado
+ *   - expiring: expires_at em até 5 dias
+ *   - ok:       expires_at em mais de 5 dias
+ *
+ * daysRemaining vem nulo nos status missing/unknown.
+ */
+const JIRA_TOKEN_WARN_DAYS = 5;
+
+const jiraTokenStatus = (user) => {
+  if (!user.api_token) return { status: 'missing', daysRemaining: null, expiresAt: null };
+  if (!user.jira_token_expires_at) return { status: 'unknown', daysRemaining: null, expiresAt: null };
+
+  const expiresAt = new Date(user.jira_token_expires_at);
+  const today = new Date();
+  // Comparação em dias inteiros para evitar oscilações por hora.
+  const msPerDay = 1000 * 60 * 60 * 24;
+  const days = Math.floor((expiresAt.setHours(23, 59, 59, 999) - today.getTime()) / msPerDay);
+
+  let status;
+  if (days < 0) status = 'expired';
+  else if (days <= JIRA_TOKEN_WARN_DAYS) status = 'expiring';
+  else status = 'ok';
+
+  return { status, daysRemaining: days, expiresAt: user.jira_token_expires_at };
+};
 
 /**
  * =========================
@@ -79,12 +113,20 @@ const mapUser = (user) => ({
  */
 export const register = async (req, res) => {
   try {
-    const { name, email, password, jiraToken } = req.body;
+    const { name, username, email, password, jiraToken, jiraTokenExpiresAt, cargoId } = req.body;
 
-    if (!name || !email || !password) {
+    if (!name || !username || !email || !password) {
       return res.status(400).json({
         success: false,
         message: 'Preencha todos os campos obrigatórios'
+      });
+    }
+
+    const usernameClean = String(username).trim();
+    if (!/^[a-zA-Z0-9._-]{3,60}$/.test(usernameClean)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Username deve ter 3-60 caracteres (letras, números, ponto, underline ou hífen).'
       });
     }
 
@@ -103,15 +145,15 @@ export const register = async (req, res) => {
       });
     }
 
-    const userExists = await query(
-      'SELECT id FROM maestro.users WHERE email = $1',
-      [email]
+    const conflict = await query(
+      'SELECT id FROM maestro.users WHERE email = $1 OR lower(username) = lower($2)',
+      [email, usernameClean]
     );
 
-    if (userExists.rows.length > 0) {
+    if (conflict.rows.length > 0) {
       return res.status(400).json({
         success: false,
-        message: 'E-mail já cadastrado'
+        message: 'E-mail ou username já cadastrado'
       });
     }
 
@@ -120,10 +162,10 @@ export const register = async (req, res) => {
 
     const result = await query(
       `INSERT INTO maestro.users
-       (name, email, password, api_token)
-       VALUES ($1, $2, $3, $4)
-       RETURNING id, name, email, created_at`,
-      [name, email, hashedPassword, encryptedToken]
+       (name, username, email, password, api_token, jira_token_expires_at, cargo_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING id, name, username, email, cargo_id, created_at`,
+      [name, usernameClean, email, hashedPassword, encryptedToken, jiraTokenExpiresAt || null, cargoId || null]
     );
 
     const user = result.rows[0];
@@ -156,15 +198,22 @@ export const register = async (req, res) => {
  */
 export const login = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { username, email, password } = req.body;
+
+    // Aceita o campo `username` (novo) ou `email` (legado, durante transição).
+    const loginId = (username ?? email ?? '').trim();
+    if (!loginId || !password) {
+      return res.status(400).json({ success: false, message: 'Credenciais inválidas' });
+    }
 
     const result = await query(
-      `SELECT id, name, email, password,
+      `SELECT id, name, username, email, password, cargo_id, is_master,
               idle_timeout_enabled, idle_timeout_minutes, must_change_password,
               locked_until, failed_attempts, last_failed_at, last_login_at
        FROM maestro.users
-       WHERE email = $1 AND deleted_at IS NULL`,
-      [email]
+       WHERE (lower(username) = lower($1) OR lower(email) = lower($1))
+         AND deleted_at IS NULL`,
+      [loginId]
     );
 
     if (result.rows.length === 0) {
@@ -247,11 +296,14 @@ export const login = async (req, res) => {
 export const getMe = async (req, res) => {
   try {
     const result = await query(
-      `SELECT id, name, email, is_master,
-              idle_timeout_enabled, idle_timeout_minutes,
-              must_change_password, created_at, updated_at
-       FROM maestro.users
-       WHERE id = $1 AND deleted_at IS NULL`,
+      `SELECT u.id, u.name, u.username, u.email, u.is_master,
+              u.idle_timeout_enabled, u.idle_timeout_minutes,
+              u.must_change_password, u.api_token, u.jira_token_expires_at,
+              u.cargo_id, c.nome AS cargo_nome,
+              u.created_at, u.updated_at
+       FROM maestro.users u
+       LEFT JOIN maestro.cargos c ON c.id = u.cargo_id
+       WHERE u.id = $1 AND u.deleted_at IS NULL`,
       [req.user.id],
     );
 
@@ -289,6 +341,7 @@ export const getMe = async (req, res) => {
             minutes:  user.idle_timeout_minutes,
           },
           mustChangePassword: user.must_change_password,
+          jiraTokenStatus: jiraTokenStatus(user),
         },
       },
     });
@@ -307,10 +360,13 @@ export const getMe = async (req, res) => {
 export const listUsers = async (_req, res) => {
   try {
     const result = await query(
-      `SELECT u.id, u.name, u.email, u.is_master, u.created_at, u.updated_at,
+      `SELECT u.id, u.name, u.username, u.email, u.is_master,
+              u.created_at, u.updated_at,
               u.idle_timeout_enabled, u.idle_timeout_minutes, u.must_change_password,
-              u.last_login_at
+              u.last_login_at, u.jira_token_expires_at,
+              u.cargo_id, c.nome AS cargo_nome
        FROM maestro.users u
+       LEFT JOIN maestro.cargos c ON c.id = u.cargo_id
        WHERE u.deleted_at IS NULL
        ORDER BY u.created_at DESC`,
     );
@@ -332,10 +388,18 @@ export const listUsers = async (_req, res) => {
  */
 export const createUser = async (req, res) => {
   try {
-    const { name, email, password, jiraToken } = req.body;
+    const { name, username, email, password, jiraToken, jiraTokenExpiresAt, cargoId } = req.body;
 
-    if (!name || !email || !password) {
-      return res.status(400).json({ success: false, message: 'Campos obrigatórios' });
+    if (!name || !username || !email || !password) {
+      return res.status(400).json({ success: false, message: 'Campos obrigatórios (name, username, email, password)' });
+    }
+
+    const usernameClean = String(username).trim();
+    if (!/^[a-zA-Z0-9._-]{3,60}$/.test(usernameClean)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Username deve ter 3-60 caracteres (letras, números, ponto, underline ou hífen).'
+      });
     }
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -346,15 +410,15 @@ export const createUser = async (req, res) => {
       });
     }
 
-    const userExists = await query(
-      'SELECT id FROM maestro.users WHERE email = $1',
-      [email]
+    const conflict = await query(
+      'SELECT id FROM maestro.users WHERE email = $1 OR lower(username) = lower($2)',
+      [email, usernameClean]
     );
 
-    if (userExists.rows.length > 0) {
+    if (conflict.rows.length > 0) {
       return res.status(400).json({
         success: false,
-        message: 'E-mail já cadastrado'
+        message: 'E-mail ou username já cadastrado'
       });
     }
 
@@ -363,10 +427,10 @@ export const createUser = async (req, res) => {
 
     const result = await query(
       `INSERT INTO maestro.users
-       (name, email, password, api_token)
-       VALUES ($1, $2, $3, $4)
-       RETURNING id, name, email, created_at, updated_at`,
-      [name, email, hashedPassword, encryptedToken]
+       (name, username, email, password, api_token, jira_token_expires_at, cargo_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING id, name, username, email, cargo_id, jira_token_expires_at, created_at, updated_at`,
+      [name, usernameClean, email, hashedPassword, encryptedToken, jiraTokenExpiresAt || null, cargoId || null]
     );
 
     res.status(201).json({
@@ -388,7 +452,7 @@ export const createUser = async (req, res) => {
 export const updateMe = async (req, res) => {
   try {
     const userId = req.user.id;
-    const { currentPassword, newPassword, jiraToken } = req.body;
+    const { currentPassword, newPassword, jiraToken, jiraTokenExpiresAt } = req.body;
 
     const existing = await query('SELECT * FROM maestro.users WHERE id = $1', [userId]);
     if (!existing.rows.length) {
@@ -422,6 +486,11 @@ export const updateMe = async (req, res) => {
       jiraTokenChanged = true;
     }
 
+    if (jiraTokenExpiresAt !== undefined) {
+      setClauses.push(`jira_token_expires_at = $${idx++}`);
+      values.push(jiraTokenExpiresAt || null);
+    }
+
     if (!setClauses.length) {
       return res.status(400).json({ success: false, message: 'Nenhuma alteração enviada.' });
     }
@@ -430,7 +499,8 @@ export const updateMe = async (req, res) => {
     values.push(userId);
 
     const result = await query(
-      `UPDATE maestro.users SET ${setClauses.join(', ')} WHERE id = $${idx} RETURNING id, name, email, created_at, updated_at`,
+      `UPDATE maestro.users SET ${setClauses.join(', ')} WHERE id = $${idx}
+       RETURNING id, name, username, email, cargo_id, jira_token_expires_at, created_at, updated_at`,
       values
     );
 
@@ -919,9 +989,13 @@ export const restoreUser = async (req, res) => {
 export const listDeletedUsers = async (_req, res) => {
   try {
     const result = await query(
-      `SELECT u.id, u.name, u.email, u.is_master, u.created_at, u.updated_at, u.deleted_at,
-              u.idle_timeout_enabled, u.idle_timeout_minutes, u.must_change_password, u.last_login_at
+      `SELECT u.id, u.name, u.username, u.email, u.is_master,
+              u.created_at, u.updated_at, u.deleted_at,
+              u.idle_timeout_enabled, u.idle_timeout_minutes, u.must_change_password,
+              u.last_login_at, u.jira_token_expires_at,
+              u.cargo_id, c.nome AS cargo_nome
        FROM maestro.users u
+       LEFT JOIN maestro.cargos c ON c.id = u.cargo_id
        WHERE u.deleted_at IS NOT NULL
        ORDER BY u.deleted_at DESC`,
     );
@@ -1131,7 +1205,7 @@ export const bulkAssignRole = async (req, res) => {
 export const updateUser = async (req, res) => {
   try {
     const userId = Number(req.params.id);
-    const { name, email, password, jiraToken } = req.body;
+    const { name, username, email, password, jiraToken, jiraTokenExpiresAt, cargoId } = req.body;
 
     if (!Number.isInteger(userId) || userId <= 0) {
       return res.status(400).json({
@@ -1140,7 +1214,6 @@ export const updateUser = async (req, res) => {
       });
     }
 
-    // Buscar usuário atual
     const existing = await query(
       'SELECT * FROM maestro.users WHERE id = $1',
       [userId]
@@ -1155,30 +1228,34 @@ export const updateUser = async (req, res) => {
 
     const currentUser = existing.rows[0];
 
-    /**
-     * =========================
-     * PREPARAR DADOS
-     * =========================
-     */
+    const updatedName     = name?.trim()  || currentUser.name;
+    const updatedEmail    = email?.trim() || currentUser.email;
 
-    const updatedName = name?.trim() || currentUser.name;
-    const updatedEmail = email?.trim() || currentUser.email;
+    let updatedUsername = currentUser.username;
+    if (username !== undefined && username !== null && String(username).trim() !== '') {
+      const usernameClean = String(username).trim();
+      if (!/^[a-zA-Z0-9._-]{3,60}$/.test(usernameClean)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Username deve ter 3-60 caracteres (letras, números, ponto, underline ou hífen).'
+        });
+      }
+      updatedUsername = usernameClean;
+    }
 
-    // validar email se veio
-
-    const emailExists = await query(
-      'SELECT id FROM maestro.users WHERE email = $1 AND id <> $2',
-      [updatedEmail, userId]
+    const conflict = await query(
+      `SELECT id FROM maestro.users
+       WHERE id <> $1 AND (email = $2 OR lower(username) = lower($3))`,
+      [userId, updatedEmail, updatedUsername]
     );
 
-    if (emailExists.rows.length) {
+    if (conflict.rows.length) {
       return res.status(400).json({
         success: false,
-        message: 'E-mail já cadastrado'
+        message: 'E-mail ou username já cadastrado'
       });
     }
 
-    // senha opcional
     let updatedPassword = currentUser.password;
     if (password) {
       if (password.length < 6) {
@@ -1190,34 +1267,38 @@ export const updateUser = async (req, res) => {
       updatedPassword = await bcrypt.hash(password, 10);
     }
 
-    // jira token opcional
+    // jira token: undefined ou '' = mantém. Caso contrário, recriptografa.
     let updatedJiraToken = currentUser.api_token;
     let jiraTokenChanged = false;
-    if (jiraToken !== undefined) {
-      if (jiraToken === '') {
-        // NÃO ALTERA
-        updatedJiraToken = currentUser.api_token;
-      } else {
-        updatedJiraToken = encrypt(jiraToken);
-        jiraTokenChanged = true;
-      }
+    if (jiraToken !== undefined && jiraToken !== '') {
+      updatedJiraToken = encrypt(jiraToken);
+      jiraTokenChanged = true;
     }
 
-    /**
-     * =========================
-     * UPDATE
-     * =========================
-     */
+    // Data de expiração do token: aceita null/'' para limpar.
+    let updatedExpires = currentUser.jira_token_expires_at;
+    if (jiraTokenExpiresAt !== undefined) {
+      updatedExpires = jiraTokenExpiresAt || null;
+    }
+
+    let updatedCargoId = currentUser.cargo_id;
+    if (cargoId !== undefined) {
+      updatedCargoId = cargoId === null || cargoId === '' ? null : Number(cargoId);
+    }
+
     const result = await query(
-      `UPDATE maestro.users 
+      `UPDATE maestro.users
        SET name = $1,
-           email = $2,
-           password = $3,
-           api_token = $4,
+           username = $2,
+           email = $3,
+           password = $4,
+           api_token = $5,
+           jira_token_expires_at = $6,
+           cargo_id = $7,
            updated_at = CURRENT_TIMESTAMP
-       WHERE id = $5
-       RETURNING id, name, email, created_at, updated_at`,
-      [updatedName, updatedEmail, updatedPassword, updatedJiraToken, userId]
+       WHERE id = $8
+       RETURNING id, name, username, email, cargo_id, jira_token_expires_at, created_at, updated_at`,
+      [updatedName, updatedUsername, updatedEmail, updatedPassword, updatedJiraToken, updatedExpires, updatedCargoId, userId]
     );
 
     if (jiraTokenChanged) {
