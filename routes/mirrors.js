@@ -13,7 +13,7 @@ router.get('/dimensions',        authenticate, requirePermission('espelhos', 're
 router.get('/factories',         authenticate, requirePermission('espelhos', 'read'),   getFactories);
 router.get('/projects',          authenticate, requirePermission('espelhos', 'read'),   getProjects);
 router.get('/previsao-material', authenticate, requirePermission('espelhos', 'read'),   getPrevisaoMaterial);
-router.post('/generate-os',      authenticate, requirePermission('espelhos', 'export'), generateOS);
+router.post('/generate-os',      authenticate, requirePermission('espelhos', 'create'), generateOS);
 
 // Diagnostic: list all Jira fields to find correct customfield IDs.
 // Usage: GET /api/mirrors/jira-fields?search=metro
