@@ -401,8 +401,13 @@ async function buildOsPdf(proj, meta, log) {
   if (infoPagesTotal === 0) throw new Error('Nenhuma página DocProject foi incluída no PDF');
   log.push(`  [OK] DocProject total: ${infoPagesTotal} pág(s)`);
 
-  await appendLastPage(pdf, proj, meta);
-  log.push('  [OK] Contracapa gerada');
+  const isTensylonProject = String(proj.material_type || '').toUpperCase() === 'TENSYLON';
+  if (!isTensylonProject) {
+    await appendLastPage(pdf, proj, meta);
+    log.push('  [OK] Contracapa gerada');
+  } else {
+    log.push('  [SKP] Contracapa pulada (Tensylon)');
+  }
 
   return Buffer.from(await pdf.save());
 }
@@ -924,17 +929,19 @@ export async function appendFirstPage(
   }
 
   // ── Pacote ────────────────────────────────────────────────────────────────
-  const pkgLabel = `Pacote ${packageNumber} - Kit`;
+  if (!isTensylonProject) {
+    const pkgLabel = `Pacote ${packageNumber} - Kit`;
 
-  const pkgW = fontBold.widthOfTextAtSize(pkgLabel, 10);
+    const pkgW = fontBold.widthOfTextAtSize(pkgLabel, 10);
 
-  page.drawText(pkgLabel, {
-    x: width - marginLeft - pkgW,
-    y: height - 45,
-    size: 10,
-    font: fontBold,
-    color: rgb(0.16, 0.44, 0.72),
-  });
+    page.drawText(pkgLabel, {
+      x: width - marginLeft - pkgW,
+      y: height - 45,
+      size: 10,
+      font: fontBold,
+      color: rgb(0.16, 0.44, 0.72),
+    });
+  }
 
   // ── Material badge ────────────────────────────────────────────────────────
   const tituloMaterial = isTensylonProject
@@ -950,6 +957,13 @@ export async function appendFirstPage(
 
   const titleX = width / 2 - titleW / 2;
 
+  const titleBgColor = isTensylonProject
+    ? rgb(0.08, 0.24, 0.55)
+    : rgb(1, 0.95, 0.2);
+  const titleTextColor = isTensylonProject
+    ? rgb(1, 1, 1)
+    : rgb(0, 0, 0);
+
   yPos -= 50;
 
   page.drawRectangle({
@@ -957,7 +971,7 @@ export async function appendFirstPage(
     y: yPos - 4,
     width: titleW + 16,
     height: titleSize + 7,
-    color: rgb(1, 0.95, 0.2),
+    color: titleBgColor,
   });
 
   page.drawText(tituloMaterial, {
@@ -965,7 +979,7 @@ export async function appendFirstPage(
     y: yPos,
     size: titleSize,
     font: fontBold,
-    color: rgb(0, 0, 0),
+    color: titleTextColor,
   });
 
   // ── Alerta de produto (à direita do título, vermelho, sem fundo) ───────────
@@ -1009,20 +1023,29 @@ export async function appendFirstPage(
   };
 
   // ── Regras ────────────────────────────────────────────────────────────────
-  const regras = [
-    ['B.E.V-TFM', 'Full Tensylon'],
-    ['B.E.V-TPM', 'Tensylon Parcial'],
-    ['B.E.V-M', 'Padrão'],
-    ['TFM', 'Full Tensylon'],
-    ['TPM', 'Tensylon Parcial'],
-    ['M', 'Padrão'],
-  ];
+  let kit = '-';
+  if (isTensylonProject) {
+    const prefixo = String(project.project || '')
+      .split('.')[0]
+      .toUpperCase();
+    if (prefixo.startsWith('TF')) kit = 'Full Tensylon';
+    else if (prefixo.startsWith('TP')) kit = 'Tensylon Parcial';
+  } else {
+    const regras = [
+      ['B.E.V-TFM', 'Full Tensylon'],
+      ['B.E.V-TPM', 'Tensylon Parcial'],
+      ['B.E.V-M', 'Padrão'],
+      ['TFM', 'Full Tensylon'],
+      ['TPM', 'Tensylon Parcial'],
+      ['M', 'Padrão'],
+    ];
 
-  const regra = regras.find(([prefixo]) =>
-    (project.project || '').startsWith(prefixo)
-  );
+    const regra = regras.find(([prefixo]) =>
+      (project.project || '').startsWith(prefixo)
+    );
 
-  const kit = regra ? regra[1] : '-';
+    if (regra) kit = regra[1];
+  }
 
   // ── Campos ────────────────────────────────────────────────────────────────
   yPos -= 60;
@@ -1031,22 +1054,37 @@ export async function appendFirstPage(
 
   const fieldSize = 16;
 
-  const fields = [
-    [
-      'Modelo:',
-      meta.veiculo ||
-        `${project.brand || ' '} ${project.model || '-'}`,
-    ],
-    ['Kit:', kit],
-    ['Tipo de teto:', project.roof_config || '-'],
-    ['Projeto:', project.project || '-'],
-    ['Data:', new Date().toLocaleDateString('pt-BR')],
-    [
-      'Quantidade de peças:',
-      String(project.total_parts_qty || '-'),
-    ],
-    ['OS:', meta.osNumber || '-'],
-  ];
+  const fields = isTensylonProject
+    ? [
+        [
+          'Modelo:',
+          meta.veiculo ||
+            `${project.brand || ' '} ${project.model || '-'}`,
+        ],
+        ['Kit:', kit],
+        ['Projeto:', project.project || '-'],
+        ['OS:', meta.osNumber || '-'],
+        [
+          'Quantidade de peças:',
+          String(project.total_parts_qty || '-'),
+        ],
+      ]
+    : [
+        [
+          'Modelo:',
+          meta.veiculo ||
+            `${project.brand || ' '} ${project.model || '-'}`,
+        ],
+        ['Kit:', kit],
+        ['Tipo de teto:', project.roof_config || '-'],
+        ['Projeto:', project.project || '-'],
+        ['Data:', new Date().toLocaleDateString('pt-BR')],
+        [
+          'Quantidade de peças:',
+          String(project.total_parts_qty || '-'),
+        ],
+        ['OS:', meta.osNumber || '-'],
+      ];
 
   // ── Square meters ─────────────────────────────────────────────────────────
   const sqm = {};
@@ -1097,6 +1135,77 @@ export async function appendFirstPage(
     });
 
     yPos -= lineHeight;
+
+    if (label === 'Quantidade de peças:' && isTensylonProject) {
+      const tensylonBlue = rgb(0.08, 0.24, 0.55);
+      const tableW = Math.min(
+        (width - marginLeft * 2) * 0.6,
+        340
+      );
+      const colW = tableW;
+      const hdrH = 30;
+      const valH = 26;
+      const labelY = yPos - 6;
+      const tableTopY = labelY - 10 - hdrH;
+
+      page.drawText('Consumo (m²):', {
+        x: marginLeft,
+        y: labelY,
+        size: fieldSize,
+        font: fontBold,
+        color: rgb(0, 0, 0),
+      });
+
+      page.drawRectangle({
+        x: marginLeft,
+        y: tableTopY,
+        width: colW,
+        height: hdrH,
+        color: tensylonBlue,
+        borderColor: rgb(0, 0, 0),
+        borderWidth: 1,
+      });
+
+      drawCentered(
+        'Tensylon',
+        marginLeft,
+        tableTopY,
+        colW,
+        hdrH,
+        14,
+        true,
+        rgb(1, 1, 1)
+      );
+
+      const valY = tableTopY - valH;
+      const rawT = sqm.tensylon;
+      const nT = parseFloat(String(rawT || '').replace(',', '.'));
+      const valTensylon =
+        Number.isFinite(nT) && nT > 0 ? rawT : '';
+
+      page.drawRectangle({
+        x: marginLeft,
+        y: valY,
+        width: colW,
+        height: valH,
+        color: rgb(1, 1, 1),
+        borderColor: tensylonBlue,
+        borderWidth: 1,
+      });
+
+      drawCentered(
+        valTensylon,
+        marginLeft,
+        valY,
+        colW,
+        valH,
+        13,
+        false,
+        rgb(0, 0, 0)
+      );
+
+      yPos = valY - 18;
+    }
 
     if (label === 'OS:' && !isTensylonProject) {
       const consumoKeys = ['8C', '9C', '11C'];
@@ -1250,13 +1359,13 @@ export async function appendFirstPage(
 
       const fImg = await doc.embedPng(fBytes);
 
-      const fH =
-        (fImg.height / fImg.width) * width;
+      const fW = 250;
+      const fH = (fImg.height / fImg.width) * fW;
 
       page.drawImage(fImg, {
-        x: 0,
+        x: width - fW,
         y: 0,
-        width,
+        width: fW,
         height: fH,
         opacity: 0.9,
       });
@@ -1532,12 +1641,13 @@ export async function appendLastPage(mergedPdf, project, meta) {
       }
 
       const fImg = await doc.embedPng(fBytes);
-      const fH = (fImg.height / fImg.width) * width;
+      const fW = 250;
+      const fH = (fImg.height / fImg.width) * fW;
 
       page.drawImage(fImg, {
-        x: 0,
+        x: width - fW,
         y: 0,
-        width,
+        width: fW,
         height: fH,
         opacity: 0.9,
       });
