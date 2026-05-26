@@ -187,6 +187,7 @@ async function ensureMaterialsTable() {
       nome          TEXT NOT NULL UNIQUE,
       tipo          TEXT,
       espessura_mm  NUMERIC(8,3),
+      descricao     TEXT,
       ativo         BOOLEAN NOT NULL DEFAULT true,
       created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at    TIMESTAMPTZ
@@ -202,6 +203,11 @@ async function ensureMaterialsTable() {
     ALTER TABLE IF EXISTS maestro.materials
     ADD COLUMN IF NOT EXISTS espessura_mm NUMERIC(8,3)
   `, 'maestro.materials.espessura_mm');
+
+  await runCompatibilityQuery(`
+    ALTER TABLE IF EXISTS maestro.materials
+    ADD COLUMN IF NOT EXISTS descricao TEXT
+  `, 'maestro.materials.descricao');
 
   // espessura só pode estar preenchida quando o tipo for AÇO.
   await runCompatibilityQuery(`

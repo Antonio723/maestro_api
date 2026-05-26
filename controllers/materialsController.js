@@ -14,7 +14,7 @@ export const listarMateriais = async (req, res) => {
     const { onlyActive } = req.query;
     const where = String(onlyActive || '').toLowerCase() === 'true' ? 'WHERE ativo = true' : '';
     const result = await pool.query(`
-      SELECT id, nome, tipo, espessura_mm, ativo, created_at, updated_at
+      SELECT id, nome, tipo, espessura_mm, descricao, ativo, created_at, updated_at
         FROM maestro.materials
         ${where}
        ORDER BY nome ASC
@@ -32,6 +32,7 @@ export const criarMaterial = async (req, res) => {
     const nome = String(req.body?.nome || '').trim();
     const tipo = req.body?.tipo ? String(req.body.tipo).toUpperCase().trim() : null;
     const espessura_mm = parseEspessura(req.body?.espessura_mm);
+    const descricao = req.body?.descricao ? String(req.body.descricao).trim() : null;
 
     if (!nome) {
       return res.status(400).json({ success: false, message: 'Nome é obrigatório.' });
@@ -44,9 +45,9 @@ export const criarMaterial = async (req, res) => {
     }
 
     const result = await pool.query(
-      `INSERT INTO maestro.materials (nome, tipo, espessura_mm) VALUES ($1, $2, $3)
-         RETURNING id, nome, tipo, espessura_mm, ativo, created_at, updated_at`,
-      [nome, tipo, espessura_mm]
+      `INSERT INTO maestro.materials (nome, tipo, espessura_mm, descricao) VALUES ($1, $2, $3, $4)
+         RETURNING id, nome, tipo, espessura_mm, descricao, ativo, created_at, updated_at`,
+      [nome, tipo, espessura_mm, descricao]
     );
     return res.status(201).json({ success: true, data: result.rows[0] });
   } catch (error) {
@@ -71,6 +72,11 @@ export const atualizarMaterial = async (req, res) => {
     }
     if (req.body?.espessura_mm !== undefined) {
       fields.espessura_mm = parseEspessura(req.body.espessura_mm);
+    }
+    if (req.body?.descricao !== undefined) {
+      fields.descricao = req.body.descricao === null || req.body.descricao === ''
+        ? null
+        : String(req.body.descricao).trim();
     }
     if (req.body?.ativo !== undefined) fields.ativo = !!req.body.ativo;
 
@@ -98,7 +104,7 @@ export const atualizarMaterial = async (req, res) => {
       `UPDATE maestro.materials
           SET ${setClauses}, updated_at = now()
         WHERE id = $${values.length}
-        RETURNING id, nome, tipo, espessura_mm, ativo, created_at, updated_at`,
+        RETURNING id, nome, tipo, espessura_mm, descricao, ativo, created_at, updated_at`,
       values
     );
 
