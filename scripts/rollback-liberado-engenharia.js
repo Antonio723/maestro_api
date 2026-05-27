@@ -44,6 +44,10 @@ const ARAMIDA_SQM_FIELDS = [
   'customfield_13632',
   'customfield_13633',
 ];
+const TENSYLON_SQM_FIELDS = [
+  'customfield_13636', // Tensylon M²
+  'customfield_13634', // Tensylon M² real
+];
 
 function isGeneratedOsPdf(attachment) {
   const filename = String(attachment?.filename || '').trim();
@@ -52,9 +56,7 @@ function isGeneratedOsPdf(attachment) {
 }
 
 function fieldsToClear(isTensylon) {
-  if (isTensylon) {
-    return process.env.JIRA_FIELD_SQM_TENSYLON ? [process.env.JIRA_FIELD_SQM_TENSYLON] : [];
-  }
+  if (isTensylon) return TENSYLON_SQM_FIELDS;
   return ARAMIDA_SQM_FIELDS;
 }
 

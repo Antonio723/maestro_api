@@ -479,8 +479,11 @@ async function syncOsToJira(userId, entry, folderName, pdfBuffer, proj, meta, lo
   const sqmFields = {};
 
   if (isTensylon) {
-    const f = process.env.JIRA_FIELD_SQM_TENSYLON;
-    if (f && sqm.tensylon != null) sqmFields[f] = toJiraStr(sqm.tensylon);
+    if (sqm.tensylon != null) {
+      const v = toJiraStr(sqm.tensylon);
+      sqmFields.customfield_13636 = v; // Tensylon M²
+      sqmFields.customfield_13634 = v; // Tensylon M² real
+    }
   } else {
     if (sqm['8C']  != null) { const v = toJiraStr(sqm['8C']);  sqmFields.customfield_13625 = v; sqmFields.customfield_13631 = v; }
     if (sqm['9C']  != null) { const v = toJiraStr(sqm['9C']);  sqmFields.customfield_13626 = v; sqmFields.customfield_13632 = v; }

@@ -15,6 +15,10 @@ const ARAMIDA_SQM_FIELDS = [
   'customfield_13632',
   'customfield_13633',
 ];
+const TENSYLON_SQM_FIELDS = [
+  'customfield_13636', // Tensylon M²
+  'customfield_13634', // Tensylon M² real
+];
 
 function parseLimitOffset(query) {
   const limit  = Math.min(Math.max(Number(query.limit)  || 50, 1), MAX_LIMIT);
@@ -186,7 +190,7 @@ function fieldsToClear(entry, projectById) {
   const material = String(project?.material_type || '').toUpperCase();
 
   if (material === 'TENSYLON' || String(entry.jiraKey || '').toUpperCase().startsWith('TENSYLON')) {
-    return process.env.JIRA_FIELD_SQM_TENSYLON ? [process.env.JIRA_FIELD_SQM_TENSYLON] : [];
+    return TENSYLON_SQM_FIELDS;
   }
 
   return ARAMIDA_SQM_FIELDS;
