@@ -24,6 +24,7 @@ import {
   excluirProject,
   obterMarcasUnicas
 } from '../controllers/jiraController.js';
+import { attachNf, attachNfStatus } from '../controllers/jiraAttachController.js';
 import { authenticate } from '../middleware/auth.js';
 import { requirePermission } from '../middleware/rbac.js';
 
@@ -53,6 +54,10 @@ router.get('/logs-espelhos',   authenticate, requirePermission('espelhos', 'read
 router.get('/projetos-espelhos',       authenticate, requirePermission('espelhos', 'read'), listarProjetosEspelhos);
 router.get('/projetos-espelhos-stats', authenticate, requirePermission('espelhos', 'read'), obterEstatisticasProjetos);
 router.get('/projetos-espelhos/:id',   authenticate, requirePermission('espelhos', 'read'), obterProjetoEspelho);
+
+// Etapa 5 — sincroniza PDF da NF para o card Jira correspondente.
+router.post('/attach-nf',        authenticate, requirePermission('invoicing', 'update'), upload.single('file'), attachNf);
+router.get('/attach-nf/status',  authenticate, requirePermission('invoicing', 'read'),   attachNfStatus);
 
 // Espelhos — maestro.project CRUD
 router.get('/projects/brands',  authenticate, requirePermission('espelhos', 'read'),   obterMarcasUnicas);

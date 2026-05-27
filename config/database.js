@@ -160,6 +160,10 @@ export async function ensureDatabaseCompatibility() {
   await ensureJiraCardsProducedAt();
   await ensurePlateSupplierTable();
   await ensurePlateSizeTable();
+  await ensurePanelReceiptTable();
+  await ensurePanelReservationTable();
+  await ensurePanelConsumptionTable();
+  await ensureJiraNfAttachmentTable();
   await ensureOsPlanningTable();
   await ensureOsPrintAuditTable();
   await ensureProductionPackTable();
@@ -390,6 +394,185 @@ async function ensurePlateSizeTable() {
     CREATE INDEX IF NOT EXISTS plate_size_supplier_idx
       ON maestro.plate_size (supplier_id)
   `, 'plate_size_supplier_idx');
+}
+
+// Recebimento de painéis externos (substitui aba "Notas Recebidas" da planilha
+// "Fábrica de Opaco - Rev2.xlsx"). consumed_m2 e reserved_m2 ficam zerados
+// nesta etapa e serão alimentados pelas etapas 3 (vínculo apontamento) e 4
+// (reservas) da SPEC-faturamento-paineis.md.
+async function ensurePanelReceiptTable() {
+  await runCompatibilityQuery(`
+    CREATE TABLE IF NOT EXISTS maestro.panel_receipts (
+      id              SERIAL PRIMARY KEY,
+      supplier        TEXT          NOT NULL,
+      external_batch  TEXT          NOT NULL,
+      invoice_number  TEXT,
+      layers          INTEGER       NOT NULL CHECK (layers > 0),
+      received_m2     NUMERIC(12,4) NOT NULL CHECK (received_m2 >= 0),
+      consumed_m2     NUMERIC(12,4) NOT NULL DEFAULT 0,
+      reserved_m2     NUMERIC(12,4) NOT NULL DEFAULT 0,
+      received_at     DATE          NOT NULL,
+      notes           TEXT,
+      created_by      INTEGER REFERENCES maestro.users(id),
+      created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at      TIMESTAMPTZ
+    )
+  `, 'maestro.panel_receipts');
+
+  // Duplicidade lógica: (supplier, external_batch, invoice_number) único.
+  // invoice_number pode ser NULL — UNIQUE NULLS NOT DISTINCT exige PG 15+;
+  // usamos índice parcial para tratar NULL como "diferente de qualquer NULL"
+  // (default ANSI) e índice separado para o caso com NF preenchida.
+  await runCompatibilityQuery(`
+    CREATE UNIQUE INDEX IF NOT EXISTS panel_receipts_supplier_batch_invoice_unique
+      ON maestro.panel_receipts (supplier, external_batch, invoice_number)
+      WHERE invoice_number IS NOT NULL
+  `, 'panel_receipts_supplier_batch_invoice_unique');
+
+  await runCompatibilityQuery(`
+    CREATE UNIQUE INDEX IF NOT EXISTS panel_receipts_supplier_batch_no_invoice_unique
+      ON maestro.panel_receipts (supplier, external_batch)
+      WHERE invoice_number IS NULL
+  `, 'panel_receipts_supplier_batch_no_invoice_unique');
+
+  await runCompatibilityQuery(`
+    CREATE INDEX IF NOT EXISTS panel_receipts_supplier_idx
+      ON maestro.panel_receipts (supplier)
+  `, 'panel_receipts_supplier_idx');
+
+  await runCompatibilityQuery(`
+    CREATE INDEX IF NOT EXISTS panel_receipts_received_at_idx
+      ON maestro.panel_receipts (received_at DESC)
+  `, 'panel_receipts_received_at_idx');
+
+  // Etapa 2 — status de validação manual de saldo (aba "Itens Negativos" / coluna Obs="Ok").
+  // AUTO   = default ao cadastrar
+  // VALIDATED = faturista revisou o saldo manualmente
+  // NEGATIVE = derivado (balance_m2 < 0) — computado em SELECT, nunca persistido aqui
+  await runCompatibilityQuery(`
+    ALTER TABLE IF EXISTS maestro.panel_receipts
+    ADD COLUMN IF NOT EXISTS validation_status TEXT NOT NULL DEFAULT 'AUTO'
+      CHECK (validation_status IN ('AUTO', 'VALIDATED'))
+  `, 'maestro.panel_receipts.validation_status');
+
+  await runCompatibilityQuery(`
+    ALTER TABLE IF EXISTS maestro.panel_receipts
+    ADD COLUMN IF NOT EXISTS validated_by INTEGER REFERENCES maestro.users(id)
+  `, 'maestro.panel_receipts.validated_by');
+
+  await runCompatibilityQuery(`
+    ALTER TABLE IF EXISTS maestro.panel_receipts
+    ADD COLUMN IF NOT EXISTS validated_at TIMESTAMPTZ
+  `, 'maestro.panel_receipts.validated_at');
+}
+
+// Etapa 4 — reservas de saldo (campo "Metragem Reservada" da planilha).
+// reserved_m2 do panel_receipt é derivado por SUM em SELECT; nunca é gravado
+// aqui — evita drift entre soma e total persistido.
+async function ensurePanelReservationTable() {
+  await runCompatibilityQuery(`
+    CREATE TABLE IF NOT EXISTS maestro.panel_reservations (
+      id                SERIAL PRIMARY KEY,
+      panel_receipt_id  INTEGER NOT NULL REFERENCES maestro.panel_receipts(id) ON DELETE CASCADE,
+      order_number      TEXT          NOT NULL,
+      reserved_m2       NUMERIC(12,4) NOT NULL CHECK (reserved_m2 > 0),
+      notes             TEXT,
+      reserved_by       INTEGER REFERENCES maestro.users(id),
+      reserved_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+      consumed_at       TIMESTAMPTZ,
+      cancelled_at      TIMESTAMPTZ,
+      cancelled_by      INTEGER REFERENCES maestro.users(id)
+    )
+  `, 'maestro.panel_reservations');
+
+  await runCompatibilityQuery(`
+    CREATE INDEX IF NOT EXISTS panel_reservations_receipt_idx
+      ON maestro.panel_reservations (panel_receipt_id)
+      WHERE consumed_at IS NULL AND cancelled_at IS NULL
+  `, 'panel_reservations_receipt_idx');
+
+  await runCompatibilityQuery(`
+    CREATE INDEX IF NOT EXISTS panel_reservations_order_idx
+      ON maestro.panel_reservations (order_number)
+      WHERE consumed_at IS NULL AND cancelled_at IS NULL
+  `, 'panel_reservations_order_idx');
+}
+
+// Etapa 7 — tabela-ponte de alocação de consumo a recebimentos de painel.
+// Como o backend da CarbonProduction (cutting_consumptions) não está no
+// workspace, esta tabela vive no maestro_api e é populada pelo frontend
+// após salvar o consumo via PUT /cutting-records/invoices. Cada linha
+// representa "x m² do consumo Y (cutting_consumption_id) foram alocados ao
+// recebimento Z, faturado na NF W". É a fonte da verdade para
+// panel_receipts.consumed_m2 (derivado no BASE_SELECT).
+async function ensurePanelConsumptionTable() {
+  await runCompatibilityQuery(`
+    CREATE TABLE IF NOT EXISTS maestro.panel_consumptions (
+      id                       SERIAL PRIMARY KEY,
+      panel_receipt_id         INTEGER NOT NULL REFERENCES maestro.panel_receipts(id) ON DELETE RESTRICT,
+      cutting_record_id        INTEGER,           -- id no backend CarbonProduction (referência fraca)
+      cutting_consumption_id   INTEGER,           -- id no backend CarbonProduction (referência fraca)
+      cutting_split_id         INTEGER,           -- id do split (quando vier fracionado por NF)
+      order_number             TEXT,
+      invoice_number           TEXT,
+      used_m2                  NUMERIC(12,4) NOT NULL CHECK (used_m2 > 0),
+      supplier                 TEXT,
+      external_batch           TEXT,
+      created_by               INTEGER REFERENCES maestro.users(id),
+      created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+      cancelled_at             TIMESTAMPTZ,
+      cancelled_by             INTEGER REFERENCES maestro.users(id)
+    )
+  `, 'maestro.panel_consumptions');
+
+  await runCompatibilityQuery(`
+    CREATE INDEX IF NOT EXISTS panel_consumptions_receipt_idx
+      ON maestro.panel_consumptions (panel_receipt_id)
+      WHERE cancelled_at IS NULL
+  `, 'panel_consumptions_receipt_idx');
+
+  await runCompatibilityQuery(`
+    CREATE INDEX IF NOT EXISTS panel_consumptions_record_idx
+      ON maestro.panel_consumptions (cutting_record_id)
+      WHERE cancelled_at IS NULL
+  `, 'panel_consumptions_record_idx');
+
+  await runCompatibilityQuery(`
+    CREATE INDEX IF NOT EXISTS panel_consumptions_order_idx
+      ON maestro.panel_consumptions (order_number)
+      WHERE cancelled_at IS NULL
+  `, 'panel_consumptions_order_idx');
+
+  await runCompatibilityQuery(`
+    CREATE INDEX IF NOT EXISTS panel_consumptions_invoice_idx
+      ON maestro.panel_consumptions (invoice_number)
+      WHERE cancelled_at IS NULL
+  `, 'panel_consumptions_invoice_idx');
+}
+
+// Etapa 5 — registro de anexos de NF enviados ao Jira via attachToJiraIssue.
+// Permite mostrar badge "Sincronizado com Jira" no DocumentUpload sem chamar
+// o Jira a cada renderização.
+async function ensureJiraNfAttachmentTable() {
+  await runCompatibilityQuery(`
+    CREATE TABLE IF NOT EXISTS maestro.jira_nf_attachments (
+      id                  SERIAL PRIMARY KEY,
+      invoice_number      TEXT NOT NULL,
+      order_number        TEXT,
+      jira_issue_key      TEXT,
+      jira_attachment_id  TEXT,
+      filename            TEXT,
+      status              TEXT NOT NULL CHECK (status IN ('SUCCESS','FAILED')),
+      error_message       TEXT,
+      attached_by         INTEGER REFERENCES maestro.users(id),
+      attached_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `, 'maestro.jira_nf_attachments');
+
+  await runCompatibilityQuery(`
+    CREATE INDEX IF NOT EXISTS jira_nf_attachments_invoice_idx
+      ON maestro.jira_nf_attachments (invoice_number, attached_at DESC)
+  `, 'jira_nf_attachments_invoice_idx');
 }
 
 async function ensureOsPlanningTable() {
