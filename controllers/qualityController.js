@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
+import axios from 'axios';
 import { query } from '../config/database.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -72,7 +73,7 @@ export const createCertificate = async (req, res) => {
   const {
     numero, certificado, paineis_balisticos, produtos, nota_fiscal,
     veiculo, data_emissao, material, norma, nivel,
-    certificados_conformidade, garantia_anos,
+    certificados_conformidade, garantia_anos, fornecedor_tecido,
   } = req.body;
 
   if (!numero) return res.status(400).json({ success: false, message: '"numero" é obrigatório.' });
@@ -81,8 +82,9 @@ export const createCertificate = async (req, res) => {
     const { rows } = await query(
       `INSERT INTO maestro.quality_certificates
          (numero, certificado, paineis_balisticos, produtos, nota_fiscal, veiculo,
-          data_emissao, material, norma, nivel, certificados_conformidade, garantia_anos, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+          data_emissao, material, norma, nivel, certificados_conformidade,
+          garantia_anos, fornecedor_tecido, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
        RETURNING *`,
       [
         numero, certificado, paineis_balisticos,
@@ -93,6 +95,7 @@ export const createCertificate = async (req, res) => {
         nivel || 'III-A',
         JSON.stringify(certificados_conformidade || []),
         garantia_anos || 5,
+        fornecedor_tecido || null,
         req.user?.id || null,
       ]
     );
@@ -108,7 +111,7 @@ export const updateCertificate = async (req, res) => {
   const {
     numero, certificado, paineis_balisticos, produtos, nota_fiscal,
     veiculo, data_emissao, material, norma, nivel,
-    certificados_conformidade, garantia_anos,
+    certificados_conformidade, garantia_anos, fornecedor_tecido,
   } = req.body;
 
   try {
@@ -116,8 +119,9 @@ export const updateCertificate = async (req, res) => {
       `UPDATE maestro.quality_certificates SET
          numero=$1, certificado=$2, paineis_balisticos=$3, produtos=$4,
          nota_fiscal=$5, veiculo=$6, data_emissao=$7, material=$8, norma=$9,
-         nivel=$10, certificados_conformidade=$11, garantia_anos=$12, updated_at=now()
-       WHERE id=$13
+         nivel=$10, certificados_conformidade=$11, garantia_anos=$12,
+         fornecedor_tecido=$13, updated_at=now()
+       WHERE id=$14
        RETURNING *`,
       [
         numero, certificado, paineis_balisticos,
@@ -128,6 +132,7 @@ export const updateCertificate = async (req, res) => {
         nivel || 'III-A',
         JSON.stringify(certificados_conformidade || []),
         garantia_anos || 5,
+        fornecedor_tecido || null,
         req.params.id,
       ]
     );
@@ -153,6 +158,149 @@ export const deleteCertificate = async (req, res) => {
     return res.status(500).json({ success: false, message: err.message });
   }
 };
+
+// ─── POST /api/quality/from-invoice ───────────────────────────────────────────
+//
+// Body: { invoice_number: string }
+// Retorna { draft, warnings } — draft é um cert. pré-preenchido (NÃO persiste);
+// usuário revisa e salva via POST /api/quality normal.
+//
+// Fluxo:
+//   1. Chama Carbon GET /invoices/{number}/quality-source.
+//   2. Para cada consumo, parseia layer_quantity e busca cert. de conformidade
+//      por (plate_supplier_id, quantidade_camadas) — agrega únicos.
+//   3. Extrai fornecedor_tecido do(s) workorder(s).
+//   4. Devolve draft + warnings para o frontend exibir.
+export const fromInvoice = async (req, res) => {
+  const invoiceNumber = String(req.body?.invoice_number || '').trim();
+  if (!invoiceNumber) {
+    return res.status(400).json({ success: false, message: '"invoice_number" é obrigatório.' });
+  }
+
+  const carbonUrl = process.env.CARBON_API_URL;
+  if (!carbonUrl) {
+    return res.status(500).json({
+      success: false,
+      message: 'CARBON_API_URL não configurado no Maestro.',
+    });
+  }
+
+  try {
+    const url = `${carbonUrl.replace(/\/+$/, '')}/invoices/${encodeURIComponent(invoiceNumber)}/quality-source`;
+    const carbonResp = await axios.get(url, { timeout: 15_000 });
+    const source = carbonResp.data;
+
+    const warnings = [];
+    const draft = buildDraftFromQualitySource(source);
+
+    // Cert. de Conformidade aplicável só para Aramida (Tensylon ainda sem rastreio).
+    const material = String(source?.cuttingRecord?.material || '').toUpperCase();
+    const isTensylon = material === 'TENSYLON';
+
+    if (isTensylon) {
+      warnings.push('Tensylon ainda não tem rastreabilidade — certificados de conformidade não foram pré-preenchidos.');
+    } else {
+      const certs = await lookupConformityCertificates(source?.consumptions || []);
+      draft.certificados_conformidade = certs.numeros;
+      warnings.push(...certs.warnings);
+    }
+
+    // Fornecedor de tecido: detecta divergência entre workorders.
+    const fabricSuppliers = new Set();
+    for (const c of source?.consumptions || []) {
+      const fs = c?.workorder?.fabricSupplier;
+      if (fs) fabricSuppliers.add(String(fs).trim());
+    }
+    if (fabricSuppliers.size === 0) {
+      warnings.push('Nenhum workorder com fornecedor de tecido cadastrado — preencher manualmente.');
+    } else if (fabricSuppliers.size > 1) {
+      warnings.push(`Múltiplos fornecedores de tecido entre os enfestos: ${[...fabricSuppliers].join(', ')}. Foi usado o primeiro.`);
+    }
+    draft.fornecedor_tecido = [...fabricSuppliers][0] || '';
+
+    return res.json({ success: true, data: { draft, warnings } });
+  } catch (err) {
+    const status = err?.response?.status;
+    if (status === 404) {
+      return res.status(404).json({
+        success: false,
+        message: `NF ${invoiceNumber} não encontrada no Carbon.`,
+      });
+    }
+    console.error('[Quality] fromInvoice error:', err?.response?.data || err.message);
+    return res.status(502).json({
+      success: false,
+      message: `Falha ao consultar Carbon: ${err?.response?.data?.message || err.message}`,
+    });
+  }
+};
+
+function buildDraftFromQualitySource(source) {
+  const cr = source?.cuttingRecord || {};
+  const total = source?.totalSquareMeters
+    ? Number(source.totalSquareMeters).toFixed(3).replace('.', ',')
+    : '';
+  return {
+    numero: '',
+    certificado: '',
+    paineis_balisticos: 'Ópera Armouring Materials',
+    produtos: [{ nome: cr.orderDescription || cr.orderNumber || '', quantidade_m2: total }],
+    nota_fiscal: source?.invoiceNumber || '',
+    veiculo: cr.orderDescription || '',
+    data_emissao: new Date().toISOString().slice(0, 10),
+    material: 'Dupont Kevlar® S745GR',
+    norma: 'ABNT NBR 15000:2020-2',
+    nivel: 'III-A',
+    certificados_conformidade: [],
+    fornecedor_tecido: '',
+    garantia_anos: 5,
+  };
+}
+
+// Parseia "8C", "9", "11C" etc. em número de camadas.
+function parseCamadas(raw) {
+  const m = String(raw || '').match(/\d+/);
+  return m ? Number(m[0]) : null;
+}
+
+async function lookupConformityCertificates(consumptions) {
+  const warnings = [];
+  const seen = new Set();
+  const numeros = [];
+
+  for (const c of consumptions) {
+    const supplierName = String(c?.supplier || '').trim();
+    const camadas = parseCamadas(c?.layerQuantity);
+    if (!supplierName || !camadas) {
+      warnings.push(`Consumo sem fornecedor ou camadas válidas (supplier="${c?.supplier}", layerQuantity="${c?.layerQuantity}").`);
+      continue;
+    }
+
+    const key = `${supplierName}|${camadas}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    const { rows } = await query(
+      `SELECT c.numero, c.nome_comercial
+         FROM maestro.conformity_certificates c
+         JOIN maestro.plate_supplier ps ON ps.id = c.plate_supplier_id
+        WHERE UPPER(ps.name) = UPPER($1)
+          AND c.quantidade_camadas = $2
+          AND c.ativo = true
+        ORDER BY c.created_at DESC
+        LIMIT 1`,
+      [supplierName, camadas]
+    );
+
+    if (rows.length === 0) {
+      warnings.push(`Nenhum Cert. de Conformidade cadastrado para fornecedor "${supplierName}" + ${camadas} camadas.`);
+      continue;
+    }
+    numeros.push(rows[0].numero);
+  }
+
+  return { numeros, warnings };
+}
 
 // ─── GET /api/quality/:id/pdf ─────────────────────────────────────────────────
 export const generateCertificatePdf = async (req, res) => {
@@ -583,6 +731,12 @@ async function buildCertificatePdf(cert) {
       'Veículo:',
       cert.veiculo || '',
       true,
+    ],
+
+    [
+      'Fornecedor de Tecido:',
+      cert.fornecedor_tecido || '',
+      false,
     ],
 
     [

@@ -920,6 +920,13 @@ async function ensureQualityCertificatesTable() {
     CREATE INDEX IF NOT EXISTS quality_certificates_numero_idx
       ON maestro.quality_certificates (numero)
   `, 'quality_certificates_numero_idx');
+
+  // Fornecedor de tecido — snapshot string. Vem do enfesto (workorder do
+  // Carbon) e fica registrado aqui para histórico do cert. emitido.
+  await runCompatibilityQuery(`
+    ALTER TABLE IF EXISTS maestro.quality_certificates
+    ADD COLUMN IF NOT EXISTS fornecedor_tecido TEXT
+  `, 'maestro.quality_certificates.fornecedor_tecido');
 }
 
 async function ensureAuditTables() {
