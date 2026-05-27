@@ -172,6 +172,7 @@ export async function ensureDatabaseCompatibility() {
   await ensureRbacTables();
   await ensureOsGeneratedMeasureTable();
   await ensureMaterialsTable();
+  await ensureMaterialMeasureTypesTable();
   await ensureProductionConfigTable();
   await ensureAppPreferencesTable();
   await ensureConformityCertificatesTable();
@@ -237,6 +238,35 @@ async function ensureMaterialsTable() {
 // Configuração global da produção — valores fixos usados na composição dos
 // códigos de Rastreabilidade e IIS (TR, tipo de embalagem, país, CEP).
 // Key/value para permitir alteração via UI sem migração de schema.
+async function ensureMaterialMeasureTypesTable() {
+  await runCompatibilityQuery(`
+    CREATE TABLE IF NOT EXISTS maestro.material_measure_types (
+      id          SERIAL PRIMARY KEY,
+      nome        TEXT NOT NULL UNIQUE,
+      unidade     TEXT,
+      ativo       BOOLEAN NOT NULL DEFAULT true,
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at  TIMESTAMPTZ
+    )
+  `, 'maestro.material_measure_types');
+
+  await runCompatibilityQuery(`
+    CREATE TABLE IF NOT EXISTS maestro.material_measure_type_map (
+      material_id     INTEGER NOT NULL REFERENCES maestro.materials(id) ON DELETE CASCADE,
+      measure_type_id INTEGER NOT NULL REFERENCES maestro.material_measure_types(id) ON DELETE CASCADE,
+      created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (material_id, measure_type_id)
+    )
+  `, 'maestro.material_measure_type_map');
+
+  await runCompatibilityQuery(`
+    INSERT INTO maestro.material_measure_types (nome, unidade) VALUES
+      ('Espessura', 'mm'),
+      ('Camadas', NULL)
+    ON CONFLICT (nome) DO NOTHING
+  `, 'material_measure_types seed');
+}
+
 async function ensureProductionConfigTable() {
   await runCompatibilityQuery(`
     CREATE TABLE IF NOT EXISTS maestro.production_config (
@@ -267,8 +297,9 @@ async function ensureConformityCertificatesTable() {
       numero             TEXT NOT NULL UNIQUE,
       nome_comercial     TEXT NOT NULL,
       material_id        INTEGER NOT NULL REFERENCES maestro.materials(id),
-      quantidade_camadas INTEGER NOT NULL CHECK (quantidade_camadas > 0),
+      quantidade_camadas INTEGER CHECK (quantidade_camadas > 0),
       espessura_mm       NUMERIC(8,3),
+      medidas            JSONB NOT NULL DEFAULT '{}'::jsonb,
       descricao          TEXT,
       ativo              BOOLEAN NOT NULL DEFAULT true,
       created_by         INTEGER REFERENCES maestro.users(id),
@@ -281,6 +312,16 @@ async function ensureConformityCertificatesTable() {
     ALTER TABLE IF EXISTS maestro.conformity_certificates
     ADD COLUMN IF NOT EXISTS espessura_mm NUMERIC(8,3)
   `, 'maestro.conformity_certificates.espessura_mm');
+
+  await runCompatibilityQuery(`
+    ALTER TABLE IF EXISTS maestro.conformity_certificates
+    ADD COLUMN IF NOT EXISTS medidas JSONB NOT NULL DEFAULT '{}'::jsonb
+  `, 'maestro.conformity_certificates.medidas');
+
+  await runCompatibilityQuery(`
+    ALTER TABLE IF EXISTS maestro.conformity_certificates
+    ALTER COLUMN quantidade_camadas DROP NOT NULL
+  `, 'maestro.conformity_certificates.quantidade_camadas nullable');
 
   await runCompatibilityQuery(`
     ALTER TABLE IF EXISTS maestro.conformity_certificates
