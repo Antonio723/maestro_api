@@ -15,6 +15,7 @@ import { decrypt } from '../utils/crypto.js';
 import pool from '../config/database.js';
 import { fetchAllProjects } from '../services/mirrorProjectRepository.js';
 import { logProjectAudit } from '../services/auditService.js';
+import { LATEST_FILE, readStatus, isRunning } from '../services/carbonReportService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -4090,4 +4091,24 @@ export const getMantaRelatorio = async (req, res) => {
       message: 'Erro ao buscar dados do Jira: ' + error.message
     });
   }
+};
+
+// ===========================================================================
+// RELATÓRIO CARBON
+// O arquivo é pré-gerado pelo cron (carbonExportJob -> carbonReportService);
+// aqui apenas servimos o último xlsx pronto para download na tela do PCP.
+// ===========================================================================
+export const getCarbonRelatorio = async (req, res) => {
+  if (!fs.existsSync(LATEST_FILE)) {
+    return res.status(404).json({
+      success: false,
+      message: 'Relatório Carbon ainda não foi gerado. Aguarde o próximo ciclo (até 15 min).'
+    });
+  }
+  const ts = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+  res.download(LATEST_FILE, `carbon-relatorio-${ts}.xlsx`);
+};
+
+export const getCarbonRelatorioStatus = async (req, res) => {
+  res.json({ success: true, ...readStatus(), running: isRunning() });
 };

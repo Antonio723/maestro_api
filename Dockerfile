@@ -1,19 +1,10 @@
-FROM node:20-alpine
-
-# Dependências do canvas + timezone
-RUN apk add --no-cache \
-    tzdata \
-    python3 \
-    make \
-    g++ \
-    cairo-dev \
-    pango-dev \
-    jpeg-dev \
-    giflib-dev \
-    pixman-dev
+# Imagem oficial do Playwright (Ubuntu Jammy) — já traz Chromium + todas as
+# libs de sistema necessárias para rodar o browser headless (scraping do Carbon).
+# Versão fixada na mesma do pacote npm "playwright" (1.60.0).
+FROM mcr.microsoft.com/playwright:v1.60.0-jammy
 
 # Timezone
-RUN cp /usr/share/zoneinfo/America/Sao_Paulo /etc/localtime \
+RUN ln -snf /usr/share/zoneinfo/America/Sao_Paulo /etc/localtime \
  && echo "America/Sao_Paulo" > /etc/timezone
 
 ENV TZ=America/Sao_Paulo

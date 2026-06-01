@@ -5,6 +5,8 @@ import {
   getContecIssues,
   getPCPRelatorio,
   getMantaRelatorio,
+  getCarbonRelatorio,
+  getCarbonRelatorioStatus,
   reprogramarEmMassa,
   atualizarDatasIndividuais,
   buscarArquivosPorIds,
@@ -39,6 +41,8 @@ router.get('/issues',          authenticate, requirePermission('pcp_orders', 're
 router.get('/contec',          authenticate, requirePermission('pcp_orders', 'read'),   getContecIssues);
 router.get('/pcp-relatorio',   authenticate, requirePermission('pcp_reports', 'read'),  getPCPRelatorio);
 router.get('/manta-relatorio', authenticate, requirePermission('pcp_reports', 'read'),  getMantaRelatorio);
+router.get('/carbon-relatorio',        authenticate, requirePermission('pcp_reports', 'read'),  getCarbonRelatorio);
+router.get('/carbon-relatorio/status', authenticate, requirePermission('pcp_reports', 'read'),  getCarbonRelatorioStatus);
 router.post('/reprogramar-massa',          authenticate, requirePermission('pcp_orders', 'update'), reprogramarEmMassa);
 router.post('/atualizar-datas-individuais', authenticate, requirePermission('pcp_orders', 'update'), atualizarDatasIndividuais);
 router.post('/buscar-arquivos',            authenticate, requirePermission('pcp_orders', 'read'),   buscarArquivosPorIds);
