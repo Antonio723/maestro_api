@@ -10,7 +10,7 @@ const __dirname = path.dirname(__filename);
 const PRINT_SERVICE_URL = (process.env.PRINT_SERVICE_URL || 'http://localhost:8080').replace(/\/+$/, '');
 const RASTREABILIDADE_REPORT_PATH = path.resolve(__dirname, '../reports/rastreabilidade_etiquetas.jrxml');
 const LABEL_CNPJ = process.env.RASTREABILIDADE_LABEL_CNPJ || '22.811.775/0002-60';
-const LABEL_NIVEL = process.env.RASTREABILIDADE_LABEL_NIVEL || 'III-A';
+const LABEL_NIVEL = process.env.RASTREABILIDADE_LABEL_NIVEL || 'IIIA';
 
 const SELECT_FIELDS = `
   r.id,
@@ -70,7 +70,15 @@ async function findRastreabilidade(id) {
 function formatCertificateLabel(numero) {
   const value = String(numero || '').trim();
   if (!value) return '';
-  return value.toUpperCase().startsWith('CC') ? value.slice(2) : value;
+  return value.toUpperCase().startsWith('CC') ? value.toUpperCase() : `CC${value}`;
+}
+
+function formatIisLabel(item) {
+  const codigo = String(item.codigo_iis || '').trim();
+  const dv = String(item.iis_dv || '').trim();
+  if (!codigo) return '';
+  if (dv && codigo.endsWith(dv)) return `${codigo.slice(0, -1)} ${dv}`;
+  return codigo;
 }
 
 function formatLayersLabel(medidas = []) {
@@ -85,8 +93,8 @@ function buildLabelData(item) {
     line1: LABEL_CNPJ,
     line2: formatCertificateLabel(item.certificate_numero),
     line3: LABEL_NIVEL,
-    line4: item.codigo_rastreabilidade,
-    line5: formatLayersLabel(item.certificate_medidas),
+    line4: formatIisLabel(item),
+    line5: `${item.codigo_rastreabilidade || ''}\n${formatLayersLabel(item.certificate_medidas)}`,
   }];
 }
 

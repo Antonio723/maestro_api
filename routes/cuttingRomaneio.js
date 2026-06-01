@@ -3,12 +3,13 @@ import {
   gerarRomaneioCorte,
   listarRomaneiosImpressos,
 } from '../controllers/cuttingRomaneioController.js';
-import { authenticate } from '../middleware/auth.js';
-import { requirePermission } from '../middleware/rbac.js';
+import { openAuth } from '../middleware/optionalAuth.js';
 
 const router = express.Router();
 
-router.get('/printed', authenticate, requirePermission('cutting_projects', 'read'), listarRomaneiosImpressos);
-router.post('/', authenticate, requirePermission('cutting_projects', 'export'), gerarRomaneioCorte);
+// ⚠️ HOTFIX ACESSO ABERTO: romaneio de corte (gerar/listar) usado pela tela de
+// Corte, liberado sem login (openAuth). Ver middleware/optionalAuth.js.
+router.get('/printed', openAuth, listarRomaneiosImpressos);
+router.post('/', openAuth, gerarRomaneioCorte);
 
 export default router;

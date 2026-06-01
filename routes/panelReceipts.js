@@ -15,11 +15,15 @@ import {
 } from '../controllers/panelReservationsController.js';
 import { authenticate } from '../middleware/auth.js';
 import { requirePermission } from '../middleware/rbac.js';
+import { openAuth } from '../middleware/optionalAuth.js';
 
 const router = express.Router();
 
+// ⚠️ HOTFIX ACESSO ABERTO: a tela de Corte consulta recebimentos via /lookup
+// sem login (openAuth). O restante do módulo de Recebimento (tela protegida do
+// Maestro) segue com authenticate + requirePermission. Ver optionalAuth.js.
 // /lookup precisa vir antes de /:id para não cair no matcher de parâmetro.
-router.get('/lookup',          authenticate, requirePermission('panel_receipts', 'read'),     lookup);
+router.get('/lookup',          openAuth,                                                  lookup);
 
 router.get('/',                authenticate, requirePermission('panel_receipts', 'read'),     listar);
 router.get('/:id',             authenticate, requirePermission('panel_receipts', 'read'),     obter);

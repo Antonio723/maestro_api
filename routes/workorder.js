@@ -8,17 +8,19 @@ import {
   deleteWorkorder,
   exportWorkordersExcel,
 } from '../controllers/workorderController.js';
-import { authenticate } from '../middleware/auth.js';
-import { requirePermission } from '../middleware/rbac.js';
+import { openAuth } from '../middleware/optionalAuth.js';
 
 const router = express.Router();
 
-router.get('/', authenticate, requirePermission('workorders', 'read'), listWorkorders);
-router.get('/plates-by-enfesto', authenticate, requirePermission('workorders', 'read'), platesByEnfesto);
-router.get('/enfesto/list', authenticate, requirePermission('workorders', 'read'), listGrouped);
-router.get('/export/excel', authenticate, requirePermission('workorders', 'read'), exportWorkordersExcel);
-router.post('/', authenticate, requirePermission('workorders', 'create'), createWorkorder);
-router.put('/:id', authenticate, requirePermission('workorders', 'update'), updateWorkorder);
-router.delete('/', authenticate, requirePermission('workorders', 'delete'), deleteWorkorder);
+// ⚠️ HOTFIX ACESSO ABERTO: rotas do Enfesto/Criar OT/PCP Estoque liberadas sem
+// login (openAuth). Ver middleware/optionalAuth.js. Para reverter, voltar a
+// usar authenticate + requirePermission('workorders', ...).
+router.get('/', openAuth, listWorkorders);
+router.get('/plates-by-enfesto', openAuth, platesByEnfesto);
+router.get('/enfesto/list', openAuth, listGrouped);
+router.get('/export/excel', openAuth, exportWorkordersExcel);
+router.post('/', openAuth, createWorkorder);
+router.put('/:id', openAuth, updateWorkorder);
+router.delete('/', openAuth, deleteWorkorder);
 
 export default router;

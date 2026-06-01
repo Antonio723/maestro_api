@@ -35,7 +35,7 @@ export const authenticate = (req, res, next) => {
     // Verificar token
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      
+
       // Adicionar dados do usuário ao request
       req.user = decoded;
       console.log('✅ Token validado para usuário:', decoded.email || decoded.id);

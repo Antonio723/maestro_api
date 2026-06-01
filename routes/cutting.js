@@ -8,20 +8,23 @@ import {
   getMetadata,
   backfillJiraKeys,
 } from '../controllers/cuttingController.js';
-import { authenticate } from '../middleware/auth.js';
-import { requirePermission } from '../middleware/rbac.js';
+import { openAuth } from '../middleware/optionalAuth.js';
 
 const router = express.Router();
 
+// ⚠️ HOTFIX ACESSO ABERTO: tela de Apontamento de Corte liberada sem login
+// (openAuth). Ver middleware/optionalAuth.js. Reverter -> authenticate +
+// requirePermission('cutting_records', ...).
+
 // Rotas estáticas antes de "/:id" para evitar colisão com :id
-router.get('/metadata', authenticate, requirePermission('cutting_records', 'read'), getMetadata);
+router.get('/metadata', openAuth, getMetadata);
 
-router.post('/backfill-jira-keys', authenticate, requirePermission('cutting_records', 'update'), backfillJiraKeys);
+router.post('/backfill-jira-keys', openAuth, backfillJiraKeys);
 
-router.get('/',        authenticate, requirePermission('cutting_records', 'read'),   getAllCuttingRecords);
-router.get('/:id',     authenticate, requirePermission('cutting_records', 'read'),   getCuttingRecordById);
-router.post('/',       authenticate, requirePermission('cutting_records', 'create'), createCuttingRecord);
-router.put('/:id',     authenticate, requirePermission('cutting_records', 'update'), updateCuttingRecord);
-router.delete('/:id',  authenticate, requirePermission('cutting_records', 'delete'), deleteCuttingRecord);
+router.get('/',        openAuth, getAllCuttingRecords);
+router.get('/:id',     openAuth, getCuttingRecordById);
+router.post('/',       openAuth, createCuttingRecord);
+router.put('/:id',     openAuth, updateCuttingRecord);
+router.delete('/:id',  openAuth, deleteCuttingRecord);
 
 export default router;

@@ -1,11 +1,12 @@
 import express from 'express';
 import { findByPlate, metadata } from '../controllers/plateEventController.js';
-import { authenticate } from '../middleware/auth.js';
-import { requirePermission } from '../middleware/rbac.js';
+import { openAuth } from '../middleware/optionalAuth.js';
 
 const router = express.Router();
 
-router.get('/metadata', authenticate, requirePermission('plates', 'read'), metadata);
-router.get('/plate/:plateId', authenticate, requirePermission('plates', 'read'), findByPlate);
+// ⚠️ HOTFIX ACESSO ABERTO: eventos de placa consultados pelas telas de chão de
+// fábrica, liberados sem login (openAuth). Ver middleware/optionalAuth.js.
+router.get('/metadata', openAuth, metadata);
+router.get('/plate/:plateId', openAuth, findByPlate);
 
 export default router;

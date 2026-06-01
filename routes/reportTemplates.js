@@ -8,6 +8,7 @@ import {
 } from '../controllers/reportTemplatesController.js';
 import { authenticate } from '../middleware/auth.js';
 import { requirePermission } from '../middleware/rbac.js';
+import { openAuth } from '../middleware/optionalAuth.js';
 
 const router = express.Router();
 
@@ -18,7 +19,10 @@ const upload = multer({
 });
 
 // Render do uso (versão OPE). Mantido antes do '/:id' para não colidir com a rota param.
-router.post('/render/:key', authenticate, requirePermission('report_templates', 'execute'), renderByKey);
+// ⚠️ HOTFIX ACESSO ABERTO: a impressão de etiquetas do Enfesto roda sem login,
+// então SOMENTE o render (/render/:key) usa openAuth. A gestão de templates
+// (tela Admin/Relatórios) segue protegida. Ver middleware/optionalAuth.js.
+router.post('/render/:key', openAuth, renderByKey);
 
 router.get('/',    authenticate, requirePermission('report_templates', 'read'),   listTemplates);
 router.get('/:id', authenticate, requirePermission('report_templates', 'read'),   getTemplate);

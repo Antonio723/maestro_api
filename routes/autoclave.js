@@ -17,30 +17,32 @@ import {
   removePlateFromPackage,
   updatePackageStatus,
 } from '../controllers/autoclavePackageController.js';
-import { authenticate } from '../middleware/auth.js';
-import { requirePermission } from '../middleware/rbac.js';
+import { openAuth } from '../middleware/optionalAuth.js';
 import { upload } from '../middleware/upload.js';
 
 const router = express.Router();
 
+// ⚠️ HOTFIX ACESSO ABERTO: tela de Autoclave liberada sem login (openAuth).
+// Ver middleware/optionalAuth.js. Reverter -> authenticate + requirePermission.
+
 // ── /cycle  ──────────────────────────────────────────────────────────────────
 // Rotas estáticas antes de "/:id/*" para evitar colisão com :id
-router.get('/cycle/summary',    authenticate, requirePermission('autoclave', 'read'), listDetailedCycles);
-router.get('/cycle/incomplete', authenticate, requirePermission('autoclave', 'read'), findIncompleteCycles);
-router.get('/cycle/by-cycle',   authenticate, requirePermission('autoclave', 'read'), findByDateRange);
-router.get('/cycle',            authenticate, requirePermission('autoclave', 'read'), getAll);
+router.get('/cycle/summary',    openAuth, listDetailedCycles);
+router.get('/cycle/incomplete', openAuth, findIncompleteCycles);
+router.get('/cycle/by-cycle',   openAuth, findByDateRange);
+router.get('/cycle',            openAuth, getAll);
 
-router.post('/cycle',                       authenticate, requirePermission('autoclave', 'create'), createCycle);
-router.post('/cycle/:id/duplicate',         authenticate, requirePermission('autoclave', 'create'), duplicateCycle);
-router.patch('/cycle/:id/status',           authenticate, requirePermission('autoclave', 'update'), updateStatus);
-router.post('/cycle/:id/upload',            authenticate, requirePermission('autoclave', 'upload'), upload.single('file'), uploadReport);
-router.post('/cycle/complete/:id/upload',   authenticate, requirePermission('autoclave', 'upload'), upload.single('file'), completeCycleWithImage);
-router.get('/cycle/:id/report',             authenticate, requirePermission('autoclave', 'download'), getReport);
+router.post('/cycle',                       openAuth, createCycle);
+router.post('/cycle/:id/duplicate',         openAuth, duplicateCycle);
+router.patch('/cycle/:id/status',           openAuth, updateStatus);
+router.post('/cycle/:id/upload',            openAuth, upload.single('file'), uploadReport);
+router.post('/cycle/complete/:id/upload',   openAuth, upload.single('file'), completeCycleWithImage);
+router.get('/cycle/:id/report',             openAuth, getReport);
 
 // ── /package ─────────────────────────────────────────────────────────────────
-router.post('/package/cycle',                authenticate, requirePermission('autoclave', 'create'), createPackage);
-router.post('/package/:packid/addPlates',    authenticate, requirePermission('autoclave', 'update'), addPlatesToPackage);
-router.post('/package/removePlate',          authenticate, requirePermission('autoclave', 'update'), removePlateFromPackage);
-router.post('/package/:packid/updateStatus', authenticate, requirePermission('autoclave', 'approve'), updatePackageStatus);
+router.post('/package/cycle',                openAuth, createPackage);
+router.post('/package/:packid/addPlates',    openAuth, addPlatesToPackage);
+router.post('/package/removePlate',          openAuth, removePlateFromPackage);
+router.post('/package/:packid/updateStatus', openAuth, updatePackageStatus);
 
 export default router;
