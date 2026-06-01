@@ -31,6 +31,7 @@ import plateRoutes from './routes/plate.js';
 import plateEventsRoutes from './routes/plateEvents.js';
 import autoclaveRoutes from './routes/autoclave.js';
 import cuttingRoutes from './routes/cutting.js';
+import tensylonEnfestoRoutes from './routes/tensylonEnfesto.js';
 import invoiceRoutes from './routes/invoices.js';
 import receiptRoutes from './routes/receipt.js';
 import { ensureDatabaseCompatibility } from './config/database.js';
@@ -120,6 +121,7 @@ app.use('/api/plate',                    plateRoutes);
 app.use('/api/plate-events',             plateEventsRoutes);
 app.use('/api/autoclave',                autoclaveRoutes);
 app.use('/api/cutting',                  cuttingRoutes);
+app.use('/api/tensylon-enfesto',         tensylonEnfestoRoutes);
 app.use('/api',                          invoiceRoutes);
 app.use('/api/receipt',                  receiptRoutes);
 
