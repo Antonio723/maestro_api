@@ -28,8 +28,17 @@ function hasStorageState() {
   }
 }
 
+// A página de login do Carbon tem DOIS forms com os mesmos ids
+// (#loginFormUser/#loginFormPassword): o de login e o de "Esqueceu sua senha?".
+// Buscar o id solto viola o strict mode do Playwright ("resolved to 2
+// elements"). Por isso escopamos tudo ao form de login (o que contém "Bem
+// vindo"), garantindo um único elemento.
+function loginForm(page) {
+  return page.locator('form').filter({ hasText: /Bem vindo/i });
+}
+
 async function isLoggedIn(page) {
-  const loginField = page.locator('#loginFormUser');
+  const loginField = loginForm(page).locator('#loginFormUser');
   const dashLink = page.getByRole('link', { name: /Dashboard de Processos/i });
   try {
     await Promise.race([
@@ -49,9 +58,10 @@ async function doLogin(page) {
     throw new Error('CARBON_USER/CARBON_PASS não configurados no ambiente');
   }
   console.log('[CarbonScraper] efetuando login');
-  await page.locator('#loginFormUser').fill(user);
-  await page.locator('#loginFormPassword').fill(pass);
-  await page.locator("button[type='submit']").click();
+  const form = loginForm(page);
+  await form.locator('#loginFormUser').fill(user);
+  await form.locator('#loginFormPassword').fill(pass);
+  await form.locator("button[type='submit']").click();
   await page
     .getByRole('link', { name: /Dashboard de Processos/i })
     .waitFor({ state: 'visible', timeout: 30000 });
