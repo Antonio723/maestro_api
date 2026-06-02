@@ -31,13 +31,13 @@ import plateRoutes from './routes/plate.js';
 import plateEventsRoutes from './routes/plateEvents.js';
 import autoclaveRoutes from './routes/autoclave.js';
 import cuttingRoutes from './routes/cutting.js';
+import tensylonEnfestoRoutes from './routes/tensylonEnfesto.js';
 import invoiceRoutes from './routes/invoices.js';
 import receiptRoutes from './routes/receipt.js';
 import { ensureDatabaseCompatibility } from './config/database.js';
 import { loadOpeVersions } from './cron_jobs/scheduler.js';
 import { migrateLegacyCronJobs } from './cron_jobs/migrateLegacyJobs.js';
 import { startRoleExpirationJob } from './jobs/roleExpirationJob.js';
-import { startCarbonExportJob } from './jobs/carbonExportJob.js';
 
 // Carregar variáveis de ambiente
 dotenv.config();
@@ -120,6 +120,7 @@ app.use('/api/plate',                    plateRoutes);
 app.use('/api/plate-events',             plateEventsRoutes);
 app.use('/api/autoclave',                autoclaveRoutes);
 app.use('/api/cutting',                  cuttingRoutes);
+app.use('/api/tensylon-enfesto',         tensylonEnfestoRoutes);
 app.use('/api',                          invoiceRoutes);
 app.use('/api/receipt',                  receiptRoutes);
 
@@ -168,7 +169,9 @@ async function bootstrap() {
     await migrateLegacyCronJobs();
     await loadOpeVersions();
     startRoleExpirationJob();
-    startCarbonExportJob();
+    // O Relatório Carbon agora roda pelo scheduler central (job 'carbon_export'
+    // em maestro.cron_jobs, semeado por migrateLegacyCronJobs) — não há mais
+    // agendamento solto aqui.
     startServer(PORT);
   } catch (error) {
     console.error('❌ Erro ao validar estrutura do banco:', error);
