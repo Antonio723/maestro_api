@@ -18,17 +18,46 @@ const STORAGE_STATE = path.join(TMP, 'carbon-auth.json');
 const RAW_FILE = path.join(TMP, 'carbon-raw.xlsx');
 
 const CARBON_URL = process.env.CARBON_URL || 'https://core.carbon.cars/';
-// Espera do "Atualizar Todos" (overlay) e timeout das navegações/cliques.
-// 30 min por padrão — o app do Carbon pode demorar bastante para responder.
-// Configuráveis por env.
+// Espera do "Atualizar Todos" (overlay) — etapa pesada, pode levar minutos.
+// 30 min por padrão. Configurável por env.
 const PROCESS_TIMEOUT_MS = Number(process.env.CARBON_PROCESS_TIMEOUT_MS) || 30 * 60 * 1000;
-const NAV_TIMEOUT_MS = Number(process.env.CARBON_NAV_TIMEOUT_MS) || 30 * 60 * 1000;
+// Timeout de login/navegação/cliques. Curto de propósito: se a sessão salva
+// expirou e caímos na tela de login, queremos FALHAR RÁPIDO para disparar o
+// relogin (retry abaixo), em vez de pendurar por 30 min. Configurável por env.
+const NAV_TIMEOUT_MS = Number(process.env.CARBON_NAV_TIMEOUT_MS) || 60 * 1000;
+// TTL da sessão salva: se o carbon-auth.json for mais velho que isso, ignora
+// e faz login novo — evita reusar um cookie prestes a expirar no servidor.
+const STORAGE_TTL_MS = Number(process.env.CARBON_STORAGE_TTL_MS) || 6 * 60 * 60 * 1000;
 
 function hasStorageState() {
   try {
     return fs.statSync(STORAGE_STATE).size > 0;
   } catch {
     return false;
+  }
+}
+
+// Sessão salva ainda "fresca"? Combina existência + tamanho + idade (TTL).
+function freshStorageState() {
+  try {
+    const st = fs.statSync(STORAGE_STATE);
+    if (st.size === 0) return false;
+    if (Date.now() - st.mtimeMs > STORAGE_TTL_MS) {
+      console.log('[CarbonScraper] sessão salva expirou por TTL — login novo');
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function clearStorageState() {
+  try {
+    fs.rmSync(STORAGE_STATE, { force: true });
+    console.log('[CarbonScraper] sessão salva descartada');
+  } catch {
+    /* arquivo pode nem existir */
   }
 }
 
@@ -74,14 +103,34 @@ async function doLogin(page) {
 
 /**
  * Executa o fluxo no Carbon e retorna o caminho do .xlsx baixado em /tmp.
+ *
+ * Tenta primeiro reaproveitando a sessão salva. Se qualquer etapa falhar
+ * (sessão expirada no servidor, login caiu no meio do caminho, etc.), descarta
+ * o storageState e refaz TODO o fluxo uma vez com login limpo. Isso evita o
+ * cenário em que um cookie morto pendura o scraper esperando o "Dashboard".
  * @returns {Promise<string>} caminho absoluto do arquivo bruto
  */
 export async function scrapeCarbonExcel() {
   fs.mkdirSync(TMP, { recursive: true });
+  try {
+    return await runCarbonFlow(freshStorageState());
+  } catch (err) {
+    console.warn(
+      `[CarbonScraper] falha no 1º ciclo (${err?.message || err}); ` +
+        'descartando sessão e tentando login limpo'
+    );
+    clearStorageState();
+    return await runCarbonFlow(false);
+  }
+}
 
+/**
+ * @param {boolean} useStored reusar a sessão salva (true) ou forçar login (false)
+ */
+async function runCarbonFlow(useStored) {
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext(
-    hasStorageState() ? { storageState: STORAGE_STATE } : {}
+    useStored && hasStorageState() ? { storageState: STORAGE_STATE } : {}
   );
   const page = await context.newPage();
 
@@ -89,7 +138,7 @@ export async function scrapeCarbonExcel() {
     page.setDefaultTimeout(NAV_TIMEOUT_MS);
     await page.goto(CARBON_URL, { waitUntil: 'domcontentloaded' });
 
-    if (await isLoggedIn(page)) {
+    if (useStored && (await isLoggedIn(page))) {
       console.log('[CarbonScraper] sessão reaproveitada (sem novo login)');
     } else {
       await doLogin(page);
