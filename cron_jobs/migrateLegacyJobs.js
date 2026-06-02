@@ -264,6 +264,22 @@ ctx.setRecordsProcessed(result.rows ?? null);
 ctx.setDetails(result);
 `.trim();
 
+// Vínculo de jira_key nos cutting_records (modelo PUSH). Antes o vínculo só
+// acontecia quando alguém abria a tela de Corte (backfill no GET /cutting). Agora
+// roda no cron: ~5 min após o card aparecer no espelho (sync_cards_jira), o corte
+// já fica vinculado, independente de UI. Reusa o serviço ESM via import dinâmico
+// (mesma fonte de heurística do apontamento — sem regra de board duplicada).
+const BACKFILL_JIRA_KEYS_CODE = `
+const { pathToFileURL } = require("node:url");
+
+const svcPath = require.resolve("../services/cuttingJiraBackfill.js");
+const { backfillCuttingJiraKeys } = await import(pathToFileURL(svcPath).href);
+
+const result = await backfillCuttingJiraKeys({ limit: 500 });
+ctx.setRecordsProcessed(result.filled);
+ctx.setDetails(result);
+`.trim();
+
 const LEGACY_JOBS = [
   {
     name: 'sync_cards_jira',
@@ -282,6 +298,12 @@ const LEGACY_JOBS = [
     description: 'Relatório Carbon: scraping do Carbon (Playwright) + de-para Jira; publica carbon-latest.xlsx para download no PCP.',
     cron_expression: '*/15 * * * *',
     code: CARBON_EXPORT_CODE,
+  },
+  {
+    name: 'backfill_jira_keys',
+    description: 'Vincula jira_key nos cutting_records com NULL (modelo push, ~5 min após o card sincronizar). Mesma heurística do apontamento via resolveJiraCardForCutting.',
+    cron_expression: '*/5 * * * *',
+    code: BACKFILL_JIRA_KEYS_CODE,
   },
 ];
 

@@ -1,5 +1,6 @@
 import pool from '../config/database.js';
-import { resolveJiraCardForCutting, pickBoardForCutting } from '../services/jiraCardLookup.js';
+import { resolveJiraCardForCutting } from '../services/jiraCardLookup.js';
+import { backfillCuttingJiraKeys } from '../services/cuttingJiraBackfill.js';
 
 // Enums espelhados do Spring (cutting/enums/*). Mantém ordem dos values() —
 // o front popula selects com essa ordem.
@@ -117,65 +118,18 @@ function mapCuttingRecord(row) {
   };
 }
 
-// Backfill lazy: tenta preencher jira_key dos registros NULL antes do SELECT,
-// limitado por chamada pra não impactar o tempo de resposta. Cards que ainda
-// não foram sincronizados continuam NULL e a próxima chamada tenta de novo.
-// NULL é estado válido (corte produzido sem card no Jira).
-async function backfillJiraKeysLazy(limit = 100) {
-  try {
-    await pool.query(
-      `
-        WITH alvo AS (
-          SELECT id, order_number, material, kit_type
-            FROM public.cutting_records
-           WHERE jira_key IS NULL
-           ORDER BY id DESC
-           LIMIT $1
-        ),
-        match AS (
-          -- DISTINCT ON garante 1 card por corte, pegando o mais recente
-          -- (mesmo tiebreak de findJiraCardByOs) — evita match ambíguo quando
-          -- vários cards do mesmo board têm a OS no resumo.
-          SELECT DISTINCT ON (a.id) a.id, jc.key
-            FROM alvo a
-            JOIN maestro.jira_cards jc
-              ON jc.resumo ILIKE '%' || a.order_number || '%'
-             -- Seleção de board MUTUAMENTE EXCLUSIVA, espelhando a precedência
-             -- de jiraCardLookup.pickBoardForCutting: TENSYLON vence; MANTA só
-             -- vale quando NÃO é tensylon. Sem isso, um corte Tensylon KIT_COMUM
-             -- casava também com cards MANTA (bug das OS 30454/32280).
-             AND (
-               (
-                 (UPPER(a.material) LIKE 'TENSYLON%' OR UPPER(a.kit_type) LIKE '%TENSYLON%')
-                 AND jc.key ILIKE 'TENSYLON-%'
-               )
-               OR (
-                 NOT (UPPER(a.material) LIKE 'TENSYLON%' OR UPPER(a.kit_type) LIKE '%TENSYLON%')
-                 AND (UPPER(a.material) = 'ARAMIDA' OR UPPER(a.kit_type) = 'KIT_COMUM')
-                 AND jc.key ILIKE 'MANTA-%'
-               )
-             )
-             AND regexp_replace(jc.resumo, '.*?(\\d{4,10})(?!.*\\d{4,10}).*', '\\1')
-                 = a.order_number
-           ORDER BY a.id, jc.last_updated_at DESC NULLS LAST
-        )
-        UPDATE public.cutting_records cr
-           SET jira_key = m.key
-          FROM match m
-         WHERE cr.id = m.id
-      `,
-      [Math.max(1, Math.min(500, Number(limit) || 100))],
-    );
-  } catch (err) {
-    // Falha não-fatal: o list deve responder mesmo sem o backfill rodar.
-    console.warn('[Cutting] backfillJiraKeysLazy falhou:', err.message);
-  }
-}
-
 // GET /autoclave is occupied; cutting lives on /cutting (mounted in server.js).
+//
+// O vínculo de jira_key é responsabilidade primária do cron `backfill_jira_keys`
+// (roda a cada 5 min, independente da UI — ver migrateLegacyJobs.js). Aqui só
+// disparamos um top-up best-effort e NÃO-BLOQUEANTE: o GET nunca espera por
+// escrita (removido o antigo UPDATE síncrono no caminho de leitura). É só uma
+// rede de segurança caso o cron esteja parado.
 export const getAllCuttingRecords = async (_req, res) => {
   try {
-    await backfillJiraKeysLazy();
+    backfillCuttingJiraKeys({ limit: 50 }).catch((err) =>
+      console.warn('[Cutting] backfill best-effort no list falhou:', err.message),
+    );
     const { rows } = await pool.query(`${CUTTING_SELECT} ORDER BY cr.id DESC`);
     return res.json(rows.map(mapCuttingRecord));
   } catch (error) {
@@ -185,16 +139,19 @@ export const getAllCuttingRecords = async (_req, res) => {
 };
 
 // POST /cutting/backfill-jira-keys — backfill explícito (admin/manual).
-// Body: { limit?: number } (default 1000). Retorna contadores antes/depois.
+// Body: { limit?: number (default 1000), reconcile?: boolean (default false) }.
+// reconcile=true também re-resolve keys com board errado (ex.: Tensylon→MANTA).
+// Retorna contadores antes/depois + scanned/filled/reconciled do serviço.
 export const backfillJiraKeys = async (req, res) => {
   try {
     const requested = Number(req.body?.limit ?? 1000);
     const limit = Number.isFinite(requested) ? Math.max(1, Math.min(5000, requested)) : 1000;
+    const reconcile = req.body?.reconcile === true || req.body?.reconcile === 'true';
 
     const before = await pool.query(
       'SELECT COUNT(*)::int AS n FROM public.cutting_records WHERE jira_key IS NULL',
     );
-    await backfillJiraKeysLazy(limit);
+    const result = await backfillCuttingJiraKeys({ limit, reconcile });
     const after = await pool.query(
       'SELECT COUNT(*)::int AS n FROM public.cutting_records WHERE jira_key IS NULL',
     );
@@ -204,8 +161,11 @@ export const backfillJiraKeys = async (req, res) => {
       data: {
         nullBefore: before.rows[0].n,
         nullAfter: after.rows[0].n,
-        filled: before.rows[0].n - after.rows[0].n,
+        filled: result.filled,
+        reconciled: result.reconciled,
+        scanned: result.scanned,
         limit,
+        reconcile,
       },
     });
   } catch (error) {
