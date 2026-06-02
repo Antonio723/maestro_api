@@ -133,17 +133,31 @@ async function backfillJiraKeysLazy(limit = 100) {
            LIMIT $1
         ),
         match AS (
-          SELECT a.id, jc.key
+          -- DISTINCT ON garante 1 card por corte, pegando o mais recente
+          -- (mesmo tiebreak de findJiraCardByOs) — evita match ambíguo quando
+          -- vários cards do mesmo board têm a OS no resumo.
+          SELECT DISTINCT ON (a.id) a.id, jc.key
             FROM alvo a
             JOIN maestro.jira_cards jc
               ON jc.resumo ILIKE '%' || a.order_number || '%'
+             -- Seleção de board MUTUAMENTE EXCLUSIVA, espelhando a precedência
+             -- de jiraCardLookup.pickBoardForCutting: TENSYLON vence; MANTA só
+             -- vale quando NÃO é tensylon. Sem isso, um corte Tensylon KIT_COMUM
+             -- casava também com cards MANTA (bug das OS 30454/32280).
              AND (
-               (UPPER(a.material) LIKE 'TENSYLON%' AND jc.key ILIKE 'TENSYLON-%')
-               OR (UPPER(a.material) = 'ARAMIDA' AND jc.key ILIKE 'MANTA-%')
-               OR (UPPER(a.kit_type) = 'KIT_COMUM' AND jc.key ILIKE 'MANTA-%')
+               (
+                 (UPPER(a.material) LIKE 'TENSYLON%' OR UPPER(a.kit_type) LIKE '%TENSYLON%')
+                 AND jc.key ILIKE 'TENSYLON-%'
+               )
+               OR (
+                 NOT (UPPER(a.material) LIKE 'TENSYLON%' OR UPPER(a.kit_type) LIKE '%TENSYLON%')
+                 AND (UPPER(a.material) = 'ARAMIDA' OR UPPER(a.kit_type) = 'KIT_COMUM')
+                 AND jc.key ILIKE 'MANTA-%'
+               )
              )
              AND regexp_replace(jc.resumo, '.*?(\\d{4,10})(?!.*\\d{4,10}).*', '\\1')
                  = a.order_number
+           ORDER BY a.id, jc.last_updated_at DESC NULLS LAST
         )
         UPDATE public.cutting_records cr
            SET jira_key = m.key
