@@ -242,6 +242,28 @@ try {
 }
 `.trim();
 
+// Relatório Carbon: scraping do Carbon (Playwright) + de-para Jira, publicando
+// carbon-latest.xlsx para download no PCP. Antes rodava como node-cron solto
+// (jobs/carbonExportJob.js); agora vive no sistema versionado para aparecer no
+// admin de crons e gravar cada execução em maestro.cron_runs.
+//
+// Reusa o serviço ESM existente via import() dinâmico — sem duplicar a lógica.
+// require.resolve aponta para Orquestra_API/services relativo ao jobWorker.cjs
+// (cron_jobs/), independente do cwd do processo.
+const CARBON_EXPORT_CODE = `
+const { pathToFileURL } = require("node:url");
+
+const svcPath = require.resolve("../services/carbonReportService.js");
+const { run } = await import(pathToFileURL(svcPath).href);
+
+const result = await run();
+if (!result || result.ok === false || result.error) {
+  throw new Error(result && (result.error || result.message) || "ciclo do Relatório Carbon falhou");
+}
+ctx.setRecordsProcessed(result.rows ?? null);
+ctx.setDetails(result);
+`.trim();
+
 const LEGACY_JOBS = [
   {
     name: 'sync_cards_jira',
@@ -254,6 +276,12 @@ const LEGACY_JOBS = [
     description: 'Atualiza situacao, status e nota_fiscal em jira_cards a partir do board ALMOXARIFADO MANTA (board 146). Só atualiza cards já existentes.',
     cron_expression: '*/5 * * * *',
     code: SYNC_ALMOXARIFADO_MANTA_CODE,
+  },
+  {
+    name: 'carbon_export',
+    description: 'Relatório Carbon: scraping do Carbon (Playwright) + de-para Jira; publica carbon-latest.xlsx para download no PCP.',
+    cron_expression: '*/15 * * * *',
+    code: CARBON_EXPORT_CODE,
   },
 ];
 

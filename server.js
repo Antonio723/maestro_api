@@ -38,7 +38,6 @@ import { ensureDatabaseCompatibility } from './config/database.js';
 import { loadOpeVersions } from './cron_jobs/scheduler.js';
 import { migrateLegacyCronJobs } from './cron_jobs/migrateLegacyJobs.js';
 import { startRoleExpirationJob } from './jobs/roleExpirationJob.js';
-import { startCarbonExportJob } from './jobs/carbonExportJob.js';
 
 // Carregar variáveis de ambiente
 dotenv.config();
@@ -170,7 +169,9 @@ async function bootstrap() {
     await migrateLegacyCronJobs();
     await loadOpeVersions();
     startRoleExpirationJob();
-    startCarbonExportJob();
+    // O Relatório Carbon agora roda pelo scheduler central (job 'carbon_export'
+    // em maestro.cron_jobs, semeado por migrateLegacyCronJobs) — não há mais
+    // agendamento solto aqui.
     startServer(PORT);
   } catch (error) {
     console.error('❌ Erro ao validar estrutura do banco:', error);
