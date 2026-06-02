@@ -16,7 +16,10 @@ import { query } from '../config/database.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WORKER_PATH = path.join(__dirname, 'jobWorker.cjs');
 
-const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000; // 30 min
+// Cap de execução do worker. Precisa ser maior que o budget interno dos jobs
+// (ex.: Relatório Carbon ~30 min) para não matar a execução antes da hora.
+// Configurável por env; default 45 min.
+const DEFAULT_TIMEOUT_MS = Number(process.env.CRON_JOB_TIMEOUT_MS) || 45 * 60 * 1000;
 
 // jobName -> { task, versionId, jobId }
 const scheduledTasks = new Map();

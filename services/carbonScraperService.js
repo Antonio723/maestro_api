@@ -18,7 +18,11 @@ const STORAGE_STATE = path.join(TMP, 'carbon-auth.json');
 const RAW_FILE = path.join(TMP, 'carbon-raw.xlsx');
 
 const CARBON_URL = process.env.CARBON_URL || 'https://core.carbon.cars/';
-const PROCESS_TIMEOUT_MS = Number(process.env.CARBON_PROCESS_TIMEOUT_MS || 240000);
+// Espera do "Atualizar Todos" (overlay) e timeout das navegações/cliques.
+// 30 min por padrão — o app do Carbon pode demorar bastante para responder.
+// Configuráveis por env.
+const PROCESS_TIMEOUT_MS = Number(process.env.CARBON_PROCESS_TIMEOUT_MS) || 30 * 60 * 1000;
+const NAV_TIMEOUT_MS = Number(process.env.CARBON_NAV_TIMEOUT_MS) || 30 * 60 * 1000;
 
 function hasStorageState() {
   try {
@@ -64,7 +68,7 @@ async function doLogin(page) {
   await form.locator("button[type='submit']").click();
   await page
     .getByRole('link', { name: /Dashboard de Processos/i })
-    .waitFor({ state: 'visible', timeout: 30000 });
+    .waitFor({ state: 'visible', timeout: NAV_TIMEOUT_MS });
   console.log('[CarbonScraper] login realizado');
 }
 
@@ -82,7 +86,7 @@ export async function scrapeCarbonExcel() {
   const page = await context.newPage();
 
   try {
-    page.setDefaultTimeout(15000);
+    page.setDefaultTimeout(NAV_TIMEOUT_MS);
     await page.goto(CARBON_URL, { waitUntil: 'domcontentloaded' });
 
     if (await isLoggedIn(page)) {
@@ -98,7 +102,7 @@ export async function scrapeCarbonExcel() {
 
     // Atualizar Todos
     const btnAtualizar = page.getByRole('button', { name: /Atualizar Todos/i });
-    await btnAtualizar.waitFor({ state: 'visible', timeout: 30000 });
+    await btnAtualizar.waitFor({ state: 'visible', timeout: NAV_TIMEOUT_MS });
     await btnAtualizar.click();
     console.log('[CarbonScraper] "Atualizar Todos" acionado, aguardando processamento');
 
@@ -118,10 +122,10 @@ export async function scrapeCarbonExcel() {
 
     // Extrair para Excel + captura do download
     const btnExcel = page.getByRole('button', { name: /Extrair para Excel/i });
-    await btnExcel.waitFor({ state: 'visible', timeout: 30000 });
+    await btnExcel.waitFor({ state: 'visible', timeout: NAV_TIMEOUT_MS });
 
     const [download] = await Promise.all([
-      page.waitForEvent('download', { timeout: 120000 }),
+      page.waitForEvent('download', { timeout: NAV_TIMEOUT_MS }),
       btnExcel.click(),
     ]);
 
