@@ -211,6 +211,43 @@ export async function resolveConformityCertsFromPlates(cuttingRecord, client = p
   return { numeros, perCert, warnings, fabricSuppliers: [...fabricSuppliers] };
 }
 
+// Resolve a conformidade para cortes de TENSYLON, que não têm placa nem camadas
+// (fluxo de enfesto próprio — ver tensylonEnfestoController). INTERIM: por
+// decisão de negócio, todo certificado de Tensylon usa o cert. de conformidade
+// ativo da variante 30A, independentemente da variante real do corte
+// (TENSYLON_30A/40A). O fornecedor de tecido vem desse mesmo cert.
+// TODO(revisão): casar pela variante real e/ou pelo public.tensylon_enfesto (OS).
+// Retorna o mesmo shape de resolveConformityCertsFromPlates.
+export async function resolveTensylonConformity(cuttingRecord, client = pool) {
+  const warnings = [];
+  const { rows } = await client.query(
+    `SELECT cc.numero, fs.name AS fabric_supplier
+       FROM maestro.conformity_certificates cc
+       JOIN maestro.materials m ON m.id = cc.material_id
+       JOIN maestro.material_variants mv ON mv.id = cc.material_variant_id
+       LEFT JOIN maestro.fabric_supplier fs ON fs.id = cc.fabric_supplier_id
+      WHERE UPPER(m.nome) = 'TENSYLON'
+        AND UPPER(mv.nome) = '30A'
+        AND cc.ativo = true
+      ORDER BY cc.created_at DESC
+      LIMIT 1`,
+  );
+
+  if (rows.length === 0) {
+    warnings.push('Nenhum cert. de conformidade ativo do Tensylon 30A cadastrado — certificado sairá sem conformidade.');
+    return { numeros: [], perCert: [], warnings, fabricSuppliers: [] };
+  }
+
+  const { numero, fabric_supplier: supplier } = rows[0];
+  const supplierName = sanitizeText(supplier);
+  return {
+    numeros: [numero],
+    perCert: [{ numero, supplier: supplierName, camadas: null, variantName: '30A' }],
+    warnings,
+    fabricSuppliers: supplierName ? [supplierName] : [],
+  };
+}
+
 // Resolve o m² do cutting_plan.square_meters para a camada de um cert. de
 // conformidade resolvido. Aramida → chave por camadas (ARAMIDA_LAYER_KEYS);
 // Tensylon → chave fixa "tensylon". Retorna null se não encontrar (caller

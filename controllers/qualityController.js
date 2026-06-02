@@ -10,6 +10,7 @@ import { resolveJiraCardForCutting } from '../services/jiraCardLookup.js';
 import {
   resolveMetragemFromMirror,
   resolveConformityCertsFromPlates,
+  resolveTensylonConformity,
   getSquareMetersForCert,
   gerarProximoNumero,
 } from '../services/qualityCertificateBuilder.js';
@@ -1314,11 +1315,14 @@ export const gerarCertificadosCorte = async (req, res) => {
           consumptions: crResult.rows[0].consumptions || [],
         };
 
+        const isTensylon = String(cuttingRecord.material || '').toUpperCase().startsWith('TENSYLON');
+
         // Escopo do FO 51: cert. de qualidade só sai pra kits KIT_COMUM
-        // 100% OPERA (todos os consumos processados internamente) E com
-        // rastreio completo de placa — todo consumo precisa ter plate_id
-        // pra que o fabric_supplier venha do workorder do enfesto (única
-        // fonte confiável). Apontamentos manuais sem placa ficam de fora.
+        // 100% OPERA (todos os consumos processados internamente). Para Aramida
+        // exige-se rastreio completo de placa — todo consumo precisa ter
+        // plate_id pra que o fabric_supplier venha do workorder do enfesto
+        // (única fonte confiável). Tensylon não tem placa (fluxo de enfesto
+        // próprio), então essa exigência não se aplica.
         if (String(cuttingRecord.kitType || '').toUpperCase() !== 'KIT_COMUM') {
           throw new Error(
             `Cert. de Qualidade só pode ser emitido para KIT_COMUM (OS ${cuttingRecord.orderNumber} é ${cuttingRecord.kitType || 'sem kit'}).`,
@@ -1339,7 +1343,7 @@ export const gerarCertificadosCorte = async (req, res) => {
           );
         }
         const semPlate = cuttingRecord.consumptions.filter((c) => !c.plateId);
-        if (semPlate.length > 0) {
+        if (!isTensylon && semPlate.length > 0) {
           throw new Error(
             `Cert. de Qualidade exige rastreio completo: todos os consumos devem ter placa do enfesto (OS ${cuttingRecord.orderNumber} tem ${semPlate.length} consumo(s) sem plate_id).`,
           );
@@ -1381,8 +1385,12 @@ export const gerarCertificadosCorte = async (req, res) => {
         // 3. Metragem do espelho.
         const metragem = await resolveMetragemFromMirror(jiraCard, cuttingRecord);
 
-        // 4. Certificados de conformidade pelas placas usadas.
-        const conformidade = await resolveConformityCertsFromPlates(cuttingRecord);
+        // 4. Certificados de conformidade. Aramida: pelas placas usadas
+        // (workorder.fabric_supplier + camadas). Tensylon: sem placa/camadas —
+        // resolve pela variante (INTERIM: fixa em 30A, ver builder).
+        const conformidade = isTensylon
+          ? await resolveTensylonConformity(cuttingRecord)
+          : await resolveConformityCertsFromPlates(cuttingRecord);
 
         const fornecedorTecido = conformidade.fabricSuppliers[0] || '';
         const warnings = [...metragem.warnings, ...conformidade.warnings];
