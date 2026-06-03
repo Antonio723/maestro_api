@@ -70,9 +70,42 @@ function loginForm(page) {
   return page.locator('form').filter({ hasText: /Bem vindo/i });
 }
 
+function dashboardProcessosLink(page) {
+  return page.getByRole('link', { name: /Dashboard de Processos$/i });
+}
+
+async function clickFirstVisible(locator) {
+  const count = await locator.count().catch(() => 0);
+  for (let i = 0; i < count; i += 1) {
+    const item = locator.nth(i);
+    if (await item.isVisible().catch(() => false)) {
+      await item.click({ timeout: 3000 }).catch(() => {});
+      return true;
+    }
+  }
+  return false;
+}
+
+async function dismissPostUpdatePopups(page) {
+  await page.keyboard.press('Escape').catch(() => {});
+  await page.waitForTimeout(300);
+
+  const closeLocators = [
+    page.locator('.p-toast-icon-close, .ui-dialog-titlebar-close, .p-dialog-header-close, .modal-header .close'),
+    page.getByRole('button', { name: /^(ok|fechar|close|entendi|confirmar)$/i }),
+    page.getByLabel(/^(close|fechar)$/i),
+    page.locator('[aria-label="Close"], [aria-label="Fechar"]'),
+  ];
+
+  for (const locator of closeLocators) {
+    const clicked = await clickFirstVisible(locator);
+    if (clicked) await page.waitForTimeout(500);
+  }
+}
+
 async function isLoggedIn(page) {
   const loginField = loginForm(page).locator('#loginFormUser');
-  const dashLink = page.getByRole('link', { name: /Dashboard de Processos/i });
+  const dashLink = dashboardProcessosLink(page);
   try {
     await Promise.race([
       loginField.waitFor({ state: 'visible', timeout: 8000 }),
@@ -95,9 +128,7 @@ async function doLogin(page) {
   await form.locator('#loginFormUser').fill(user);
   await form.locator('#loginFormPassword').fill(pass);
   await form.locator("button[type='submit']").click();
-  await page
-    .getByRole('link', { name: /Dashboard de Processos/i })
-    .waitFor({ state: 'visible', timeout: NAV_TIMEOUT_MS });
+  await dashboardProcessosLink(page).waitFor({ state: 'visible', timeout: NAV_TIMEOUT_MS });
   console.log('[CarbonScraper] login realizado');
 }
 
@@ -147,7 +178,7 @@ async function runCarbonFlow(useStored) {
     await context.storageState({ path: STORAGE_STATE });
 
     // Navega para o Dashboard de Processos
-    await page.getByRole('link', { name: /Dashboard de Processos/i }).click();
+    await dashboardProcessosLink(page).click();
 
     // Atualizar Todos
     const btnAtualizar = page.getByRole('button', { name: /Atualizar Todos/i });
@@ -169,13 +200,17 @@ async function runCarbonFlow(useStored) {
       );
     console.log('[CarbonScraper] processamento concluído');
 
+    await dismissPostUpdatePopups(page);
+
     // Extrair para Excel + captura do download
     const btnExcel = page.getByRole('button', { name: /Extrair para Excel/i });
     await btnExcel.waitFor({ state: 'visible', timeout: NAV_TIMEOUT_MS });
+    await btnExcel.scrollIntoViewIfNeeded().catch(() => {});
+    await page.locator('.p-toast').waitFor({ state: 'hidden', timeout: 3000 }).catch(() => {});
 
     const [download] = await Promise.all([
       page.waitForEvent('download', { timeout: NAV_TIMEOUT_MS }),
-      btnExcel.click(),
+      btnExcel.click({ force: true }),
     ]);
 
     await download.saveAs(RAW_FILE);
