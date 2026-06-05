@@ -7,9 +7,6 @@ import {
   findItemByKey,
   buildItemLabel,
   buildLabelPdf,
-  printZpl,
-  isPrinterConfigured,
-  listWindowsPrinters,
   LABELS_DIR,
 } from '../services/labelService.js';
 
@@ -17,7 +14,7 @@ import {
 export const listFiles = async (req, res) => {
   try {
     const files = await listFileSummaries();
-    return res.status(200).json({ success: true, data: files, dir: LABELS_DIR, printerConfigured: isPrinterConfigured() });
+    return res.status(200).json({ success: true, data: files, dir: LABELS_DIR });
   } catch (error) {
     console.error('❌ Erro ao listar arquivos de etiqueta:', error);
     return res.status(500).json({ success: false, message: `Erro: ${error.message}` });
@@ -78,56 +75,3 @@ export const downloadZpl = async (req, res) => {
   }
 };
 
-// GET /api/labels/printers — impressoras do Windows (para o seletor da tela).
-// Em backend não-Windows volta lista vazia.
-export const listPrinters = async (req, res) => {
-  try {
-    const printers = await listWindowsPrinters();
-    return res.status(200).json({ success: true, data: printers, platform: process.platform });
-  } catch (error) {
-    console.error('❌ Erro ao listar impressoras do Windows:', error);
-    return res.status(200).json({ success: true, data: [], platform: process.platform });
-  }
-};
-
-// POST /api/labels/print  { key, mode, printerName, printerHost, printerPort }
-//   mode 'network' → Zebra de rede (TCP 9100).
-//   mode 'windows' → impressora compartilhada do Windows (copy /B \\host\share).
-// A configuração da tela (por dispositivo) tem prioridade sobre o env. Sem nenhuma
-// impressora configurada, devolve o ZPL para download no cliente.
-export const printItem = async (req, res) => {
-  try {
-    const key = req.body?.key;
-    if (!key) return res.status(400).json({ success: false, message: 'Item não informado.' });
-    const item = await findItemByKey(String(key));
-    if (!item) return res.status(404).json({ success: false, message: 'Item não encontrado.' });
-
-    const zpl = buildItemLabel(item);
-
-    const mode = req.body?.mode ? String(req.body.mode).toLowerCase() : '';
-    const reqHost = req.body?.printerHost ? String(req.body.printerHost).trim() : '';
-    const reqPort = req.body?.printerPort ? Number(req.body.printerPort) : undefined;
-    const reqName = req.body?.printerName ? String(req.body.printerName).trim() : '';
-
-    // O que a tela informou para o modo escolhido?
-    const screenHasTarget = mode === 'windows' ? Boolean(reqName) : Boolean(reqHost);
-
-    if (!screenHasTarget && !isPrinterConfigured()) {
-      // Sem impressora (nem da tela, nem do servidor): cliente baixa o ZPL.
-      return res.status(200).json({ success: true, status: 'zpl', zpl, message: 'Nenhuma impressora configurada — ZPL retornado para download.' });
-    }
-
-    const result = await printZpl(zpl, {
-      mode: mode || undefined,
-      // Modo Windows usa o host do compartilhamento (localhost/env), NUNCA o
-      // campo de IP da rede — senão um "IP:porta" vira UNC inválida (\\ip:porta\share).
-      host: mode === 'windows' ? undefined : (reqHost || undefined),
-      port: reqPort,
-      name: reqName || undefined,
-    });
-    return res.status(200).json({ success: true, status: 'printed', printer: result.printer, mode: result.mode });
-  } catch (error) {
-    console.error('❌ Erro ao imprimir etiqueta:', error);
-    return res.status(502).json({ success: false, message: `Falha ao imprimir: ${error.message}` });
-  }
-};
