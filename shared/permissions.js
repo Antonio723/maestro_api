@@ -33,6 +33,7 @@ export const RESOURCES = {
   plates:                ['read', 'create', 'update'],
   autoclave:             ['read', 'create', 'update', 'approve', 'upload', 'download'],
   cutting_records:       ['read', 'create', 'update', 'delete'],
+  etiquetas:             ['read', 'print', 'download'],
 
   // Faturamento
   invoices:            ['read', 'create', 'update', 'upload', 'download', 'approve'],
@@ -93,6 +94,7 @@ export const RESOURCE_LABELS = {
   plates:                  'Placas',
   autoclave:               'Autoclave',
   cutting_records:         'Apontamento de Corte',
+  etiquetas:               'Etiquetagem',
   invoices:            'Notas Fiscais',
   receipts:            'Recebimentos',
   plate_suppliers:     'Fornecedores de Placa',
@@ -126,6 +128,7 @@ export const ACTION_LABELS = {
   execute:  'Executar',
   promote:  'Promover',
   manage:   'Gerenciar',
+  print:    'Imprimir',
 };
 
 // Module = business area grouping a set of resources (pages).
@@ -148,7 +151,7 @@ export const MODULES = [
 // null = always accessible to any authenticated user.
 const productionModule = MODULES.find((m) => m.id === 'producao');
 if (productionModule) {
-  productionModule.resources = ['workorders', 'plates', 'autoclave', 'cutting_records', 'rastreabilidades', 'production_config'];
+  productionModule.resources = ['workorders', 'plates', 'autoclave', 'cutting_records', 'etiquetas', 'rastreabilidades', 'production_config'];
 }
 
 export const ROUTE_PERMISSIONS = {
@@ -167,6 +170,7 @@ export const ROUTE_PERMISSIONS = {
   '/recebimento-materias':         { resource: 'receipts',            action: 'read'   },
   '/CreateCicleAutoClave':         { resource: 'autoclave',           action: 'read'   },
   '/corte':                        { resource: 'cutting_records',     action: 'read'   },
+  '/etiquetas':                    { resource: 'etiquetas',           action: 'read'   },
   '/cadastros/fornecedores-placa':         { resource: 'plate_suppliers',         action: 'read' },
   '/recebimento-paineis':                  { resource: 'panel_receipts',          action: 'read' },
   '/cadastros/fornecedores-tecido':        { resource: 'fabric_suppliers',        action: 'read' },
@@ -267,6 +271,9 @@ export const PERMISSION_DESCRIPTIONS = {
   'cutting_records:create': 'Criar apontamentos de corte',
   'cutting_records:update': 'Editar apontamentos de corte',
   'cutting_records:delete': 'Excluir apontamentos de corte',
+  'etiquetas:read':     'Visualizar e pré-visualizar etiquetas de corte (ZPL)',
+  'etiquetas:print':    'Enviar etiquetas para a impressora',
+  'etiquetas:download': 'Baixar arquivos ZPL das etiquetas',
   'invoices:read':     'Visualizar faturamento, notas fiscais e documentos',
   'invoices:create':   'Criar notas fiscais a partir dos apontamentos',
   'invoices:update':   'Editar apontamentos de nota fiscal',

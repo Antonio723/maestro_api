@@ -7,6 +7,7 @@ import QRCode from 'qrcode';
 
 import JSZip from 'jszip';
 import { fetchJiraIssues, fetchAramidaIssues, fetchTensylonIssues, fetchPrevisaoMantaIssues, fetchPrevisaoTensylonIssues, fetchLiberadoEngenhariaIssues, attachToJiraIssue, updateJiraIssueFields, deleteJiraAttachment, fetchJiraFields, transitionJiraIssue } from '../services/jiraService.js';
+import { saveProcessedLabelTxt, LABELS_DIR } from '../services/labelService.js';
 import { fetchAllProjects, fetchProjectsByIds, fetchDistinctDimensions } from '../services/mirrorProjectRepository.js';
 import pool from '../config/database.js';
 import { classifyAll } from '../services/classifierService.js';
@@ -590,6 +591,17 @@ async function processOsEntry(entry, proj, zip, req, fieldWarnings) {
     // Sucesso: adiciona os TXTs direto na raiz do zip
     for (const t of txtEntries) {
       zip.file(t.name, t.content);
+    }
+
+    // Salva também os TXTs já processados (XXXXX→OS) na pasta de etiquetas,
+    // para a tela de Etiquetagem ler direto. Best-effort: não derruba a OS.
+    for (const t of txtEntries) {
+      try {
+        const saved = await saveProcessedLabelTxt(t.name, t.content);
+        log.push(`  [OK] TXT salvo p/ etiquetagem: ${saved}`);
+      } catch (saveErr) {
+        log.push(`  [AVS] Falha ao salvar TXT na pasta de etiquetas (${LABELS_DIR}): ${saveErr.message}`);
+      }
     }
 
     log.push('  → RESULTADO: SUCESSO');

@@ -34,6 +34,7 @@ import cuttingRoutes from './routes/cutting.js';
 import tensylonEnfestoRoutes from './routes/tensylonEnfesto.js';
 import invoiceRoutes from './routes/invoices.js';
 import receiptRoutes from './routes/receipt.js';
+import labelsRoutes from './routes/labels.js';
 import { ensureDatabaseCompatibility } from './config/database.js';
 import { loadOpeVersions } from './cron_jobs/scheduler.js';
 import { migrateLegacyCronJobs } from './cron_jobs/migrateLegacyJobs.js';
@@ -121,6 +122,7 @@ app.use('/api/plate-events',             plateEventsRoutes);
 app.use('/api/autoclave',                autoclaveRoutes);
 app.use('/api/cutting',                  cuttingRoutes);
 app.use('/api/tensylon-enfesto',         tensylonEnfestoRoutes);
+app.use('/api/labels',                   labelsRoutes);
 app.use('/api',                          invoiceRoutes);
 app.use('/api/receipt',                  receiptRoutes);
 
