@@ -245,6 +245,14 @@ async function ensureMaterialsTable() {
     ADD COLUMN IF NOT EXISTS tipo TEXT
   `, 'maestro.materials.tipo');
 
+  // Código numérico (1 dígito) do material usado no sequencial da Rastreabilidade.
+  // Ex.: 1=Aramida, 2=Polietileno, 3=Aço — editável no cadastro de materiais.
+  await runCompatibilityQuery(`
+    ALTER TABLE IF EXISTS maestro.materials
+    ADD COLUMN IF NOT EXISTS codigo_rastreabilidade SMALLINT
+      CHECK (codigo_rastreabilidade IS NULL OR codigo_rastreabilidade BETWEEN 0 AND 9)
+  `, 'maestro.materials.codigo_rastreabilidade');
+
   // Limpeza: espessura e descricao foram realocadas para conformity_certificates.
   await runCompatibilityQuery(`
     ALTER TABLE IF EXISTS maestro.materials
@@ -749,6 +757,14 @@ async function ensureFabricSupplierTable() {
       updated_at  TIMESTAMPTZ
     )
   `, 'maestro.fabric_supplier');
+
+  // Código numérico (2 dígitos) do fornecedor usado no sequencial da Rastreabilidade.
+  // Ex.: 1=Protecta, 2=Dupont, 3=Dyneema, 4=APERAM — editável no cadastro de fornecedores.
+  await runCompatibilityQuery(`
+    ALTER TABLE IF EXISTS maestro.fabric_supplier
+    ADD COLUMN IF NOT EXISTS codigo_rastreabilidade SMALLINT
+      CHECK (codigo_rastreabilidade IS NULL OR codigo_rastreabilidade BETWEEN 0 AND 99)
+  `, 'maestro.fabric_supplier.codigo_rastreabilidade');
 }
 
 // Tabelas de Enfesto compartilhadas com o Spring (printServiceCarbon). Criadas

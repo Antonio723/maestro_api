@@ -1,5 +1,17 @@
 import pool from '../config/database.js';
 
+// Código de rastreabilidade do material: 1 dígito (0-9) ou null para limpar.
+// Aceita '', null e undefined como "não informado" (=> null).
+function parseCodigoRastreabilidade(value, { max = 9 } = {}) {
+  if (value === undefined) return undefined; // não mexe no campo
+  if (value === null || value === '') return null;
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 0 || n > max) {
+    throw new Error(`codigo_rastreabilidade inválido (use um inteiro entre 0 e ${max}).`);
+  }
+  return n;
+}
+
 const normalizeMeasureIds = (value) => {
   if (!Array.isArray(value)) return [];
   return [...new Set(
@@ -31,6 +43,7 @@ export const listarMateriais = async (req, res) => {
         m.id,
         m.nome,
         m.tipo,
+        m.codigo_rastreabilidade,
         m.ativo,
         m.created_at,
         m.updated_at,
@@ -69,6 +82,7 @@ export const criarMaterial = async (req, res) => {
   try {
     const nome = String(req.body?.nome || '').trim();
     const medidaIds = normalizeMeasureIds(req.body?.medidas);
+    const codigo = parseCodigoRastreabilidade(req.body?.codigo_rastreabilidade);
 
     if (!nome) {
       return res.status(400).json({ success: false, message: 'Nome é obrigatório.' });
@@ -76,15 +90,18 @@ export const criarMaterial = async (req, res) => {
 
     await client.query('BEGIN');
     const result = await client.query(
-      `INSERT INTO maestro.materials (nome, tipo) VALUES ($1, NULL)
-       RETURNING id, nome, tipo, ativo, created_at, updated_at`,
-      [nome],
+      `INSERT INTO maestro.materials (nome, tipo, codigo_rastreabilidade) VALUES ($1, NULL, $2)
+       RETURNING id, nome, tipo, codigo_rastreabilidade, ativo, created_at, updated_at`,
+      [nome, codigo === undefined ? null : codigo],
     );
     await replaceMaterialMeasures(client, result.rows[0].id, medidaIds);
     await client.query('COMMIT');
     return res.status(201).json({ success: true, data: result.rows[0] });
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
+    if (/codigo_rastreabilidade inválido/.test(error.message)) {
+      return res.status(400).json({ success: false, message: error.message });
+    }
     if (error.code === '23505') {
       return res.status(409).json({ success: false, message: 'Já existe um material com esse nome.' });
     }
@@ -103,6 +120,8 @@ export const atualizarMaterial = async (req, res) => {
     const fields = {};
     if (req.body?.nome !== undefined) fields.nome = String(req.body.nome).trim();
     if (req.body?.ativo !== undefined) fields.ativo = !!req.body.ativo;
+    const codigo = parseCodigoRastreabilidade(req.body?.codigo_rastreabilidade);
+    if (codigo !== undefined) fields.codigo_rastreabilidade = codigo;
 
     if (fields.nome === '') {
       return res.status(400).json({ success: false, message: 'Nome não pode ser vazio.' });
@@ -121,13 +140,13 @@ export const atualizarMaterial = async (req, res) => {
         `UPDATE maestro.materials
             SET ${setClauses}, updated_at = now()
           WHERE id = $${values.length}
-          RETURNING id, nome, tipo, ativo, created_at, updated_at`,
+          RETURNING id, nome, tipo, codigo_rastreabilidade, ativo, created_at, updated_at`,
         values,
       );
       updated = result.rows[0];
     } else {
       const result = await client.query(
-        'SELECT id, nome, tipo, ativo, created_at, updated_at FROM maestro.materials WHERE id = $1',
+        'SELECT id, nome, tipo, codigo_rastreabilidade, ativo, created_at, updated_at FROM maestro.materials WHERE id = $1',
         [id],
       );
       updated = result.rows[0];
@@ -146,6 +165,9 @@ export const atualizarMaterial = async (req, res) => {
     return res.status(200).json({ success: true, data: updated });
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
+    if (/codigo_rastreabilidade inválido/.test(error.message)) {
+      return res.status(400).json({ success: false, message: error.message });
+    }
     if (error.code === '23505') {
       return res.status(409).json({ success: false, message: 'Já existe um material com esse nome.' });
     }
