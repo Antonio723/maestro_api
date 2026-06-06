@@ -9,7 +9,14 @@ services:
     restart: always
     environment:
       - UPLOAD_DIR=/data/attachments
+      - LABELS_DIR=/opt/applicationStorage/orquestra/labels
     volumes:
+      # Persiste a pasta INTEIRA no host: qualquer módulo que grave sob
+      # /opt/applicationStorage fica salvo e NUNCA é apagado em down/up --build.
+      # (Bind mount = o dado vive no host, fora do ciclo de vida do container.)
+      - /opt/applicationStorage:/opt/applicationStorage
+      # Compatibilidade: mantém o caminho /data/attachments já usado pelos anexos
+      # (aponta para o MESMO dado no host; evita mexer em referências existentes).
       - /opt/applicationStorage/orquestra/attachments/projects:/data/attachments
 
 networks:
