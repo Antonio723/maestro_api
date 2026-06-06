@@ -20,10 +20,14 @@ COMO USAR (uma vez):
 
 Pronto: clique nas pecas que cada uma imprime direto, sem janela nenhuma.
 
-INICIAR SOZINHO COM O WINDOWS (opcional):
-- Tecle Win+R, digite  shell:startup  e Enter.
-- Crie um atalho do "iniciar-agente.bat" dentro dessa pasta. O agente passa a
-  subir sozinho quando voce liga o computador.
+RODAR EM SEGUNDO PLANO (recomendado - sem janela, inicia com o Windows):
+- De dois cliques em "instalar-no-inicio.bat".
+  Ele passa a rodar OCULTO (sem janela para fechar por acidente) e sobe sozinho
+  toda vez que o Windows liga. Ja inicia na hora.
+- Para desativar: dois cliques em "remover-do-inicio.bat".
+
+  (Se preferir ver a janela, use o "iniciar-agente.bat" - mas nao feche a janela,
+   senao o agente para.)
 
 DICA DE QUALIDADE:
 - Para o ZPL sair perfeito, use uma impressora com driver que aceita dados crus

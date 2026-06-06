@@ -119,8 +119,9 @@ Write-Host "  Deixe esta janela aberta. Feche-a para parar o agente."
 Write-Host ""
 
 while ($true) {
-  $client = $listener.AcceptTcpClient()
+  $client = $null
   try {
+    $client = $listener.AcceptTcpClient()
     $client.ReceiveTimeout = 6000
     $stream = $client.GetStream()
     $req = Read-Request $stream
@@ -156,6 +157,6 @@ while ($true) {
   } catch {
     # erros por conexao nao derrubam o agente
   } finally {
-    $client.Close()
+    if ($client) { try { $client.Close() } catch {} }
   }
 }
