@@ -1,0 +1,35 @@
+ETIQUETAGEM - AGENTE DE IMPRESSAO (Windows, sem instalar nada)
+==============================================================
+
+Por que existe: o sistema roda na nuvem e o navegador NAO consegue imprimir
+direto numa impressora pelo nome. Este agente roda na sua maquina Windows,
+recebe a etiqueta do navegador e imprime CRU na impressora compartilhada que
+voce escolher - sem janela de impressao, sempre na mesma.
+
+Usa apenas o PowerShell que ja vem no Windows. Nao instala Node, Python, nada.
+
+COMO USAR (uma vez):
+1) Compartilhe a impressora no Windows com um nome SEM espacos (ex.: ZEBRA_RAW1):
+   Painel de Controle > Dispositivos e Impressoras > botao direito na impressora
+   > Propriedades da impressora > aba Compartilhamento > marque "Compartilhar"
+   e defina o nome (ex.: ZEBRA_RAW1).
+2) De dois cliques em "iniciar-agente.bat". Vai abrir uma janela escrito
+   "Ouvindo em http://127.0.0.1:9110". Deixe essa janela aberta.
+3) Na tela de Etiquetagem do sistema, em Configuracoes > Impressora, cole o nome
+   do compartilhamento (ex.: ZEBRA_RAW1) e clique em Testar.
+
+Pronto: clique nas pecas que cada uma imprime direto, sem janela nenhuma.
+
+INICIAR SOZINHO COM O WINDOWS (opcional):
+- Tecle Win+R, digite  shell:startup  e Enter.
+- Crie um atalho do "iniciar-agente.bat" dentro dessa pasta. O agente passa a
+  subir sozinho quando voce liga o computador.
+
+DICA DE QUALIDADE:
+- Para o ZPL sair perfeito, use uma impressora com driver que aceita dados crus
+  (o "ZDesigner ZPL" da Zebra, compartilhado por ex. como ZEBRA_RAW, ou um driver
+  "Generic / Text Only"). Drivers comuns podem rasterizar e sair borrado.
+
+CONFIGURACAO AVANCADA:
+- Porta: variavel de ambiente ORQ_AGENT_PORT (padrao 9110).
+- O agente escuta SOMENTE em 127.0.0.1 (so o navegador da propria maquina o acessa).

@@ -1,6 +1,10 @@
 // Etiquetagem — endpoints que servem a tela de impressão de etiquetas ZPL.
 // Lê os .txt da pasta LABELS_DIR (a mesma onde o generateOS grava os TXT da OS).
 
+import path from 'node:path';
+import { readFile, readdir } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import JSZip from 'jszip';
 import {
   listFileSummaries,
   loadFileData,
@@ -9,6 +13,32 @@ import {
   buildLabelPdf,
   LABELS_DIR,
 } from '../services/labelService.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const AGENT_DIR = path.resolve(__dirname, '../print-agent');
+
+// GET /api/labels/agent — baixa o Agente de Impressão (PowerShell) zipado, para
+// rodar na estação Windows. Sem o agente, a tela imprime pelo diálogo do navegador.
+export const downloadAgent = async (req, res) => {
+  try {
+    const names = await readdir(AGENT_DIR);
+    const zip = new JSZip();
+    const folder = zip.folder('orquestra-agente-impressao');
+    for (const name of names) {
+      if (name.startsWith('.')) continue;
+      const buf = await readFile(path.join(AGENT_DIR, name));
+      folder.file(name, buf);
+    }
+    const content = await zip.generateAsync({ type: 'nodebuffer' });
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', 'attachment; filename="orquestra-agente-impressao.zip"');
+    res.setHeader('Content-Length', content.length);
+    return res.end(content);
+  } catch (error) {
+    console.error('❌ Erro ao gerar zip do agente:', error);
+    return res.status(500).json({ success: false, message: `Erro: ${error.message}` });
+  }
+};
 
 // GET /api/labels/files — lista os arquivos (OS) disponíveis na pasta.
 export const listFiles = async (req, res) => {
