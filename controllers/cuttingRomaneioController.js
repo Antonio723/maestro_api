@@ -732,7 +732,7 @@ async function buildRomaneioPdf({ deliveryDate, items }) {
     drawCentered(page, 'OS', xOs, headerTextY, colOs, { size: 7.5, bold: true });
     drawCentered(page, 'PROJETO', xProject, headerTextY, colProject, { size: 7.5, bold: true });
     drawCentered(page, 'DESCRIÇÃO', xDesc, headerTextY, colDesc, { size: 7.5, bold: true });
-    drawCentered(page, 'NF', xNf, headerTextY, colNf, { size: 7.5, bold: true });
+    drawCentered(page, 'MATERIAL', xNf, headerTextY, colNf, { size: 7.5, bold: true });
 
     for (let i = 0; i < rows; i++) {
       const y = tableTop - tableHeaderH - (i + 1) * rowH;
@@ -743,6 +743,8 @@ async function buildRomaneioPdf({ deliveryDate, items }) {
     const firstRowY = tableTop - tableHeaderH - rowH;
     drawCentered(page, item.osNumber || '-', xOs, firstRowY + 11, colOs, { size: 8, bold: true });
     drawCentered(page, item.project || '-', xProject, firstRowY + 11, colProject, { size: 8 });
+    // Material do kit produzido (ex.: ARAMIDA / TENSYLON) — substitui a antiga coluna NF.
+    drawCentered(page, (item.material || '-').toUpperCase(), xNf, firstRowY + 11, colNf, { size: 8, bold: true });
 
     const descLines = wrapText(item.description || '-', font, 7.5, colDesc - 10).slice(0, 2);
     if (descLines.length === 1) {
