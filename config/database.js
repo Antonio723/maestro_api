@@ -994,6 +994,23 @@ async function ensureCarbonSharedTables() {
     )
   `, 'public.package');
 
+  // Compatibilidade: bancos legados criados pelo Spring tinham package.id BIGINT
+  // sem default (Hibernate fornecia o id via @GeneratedValue). Como o INSERT do
+  // Maestro não passa id explicitamente, garantimos o DEFAULT nextval e
+  // sincronizamos a sequence para que o próximo valor seja > MAX(id) existente.
+  // (Mesmo tratamento de workorder_table/plates/plate_event acima.)
+  await runCompatibilityQuery(
+    `ALTER TABLE IF EXISTS public.package
+       ALTER COLUMN id SET DEFAULT nextval('public.package_autoclave_sequence')`,
+    'public.package.id default',
+  );
+  await runCompatibilityQuery(
+    `SELECT setval('public.package_autoclave_sequence',
+       GREATEST((SELECT COALESCE(MAX(id), 0) FROM public.package) + 1, 1),
+       false)`,
+    'public.package_autoclave_sequence sync',
+  );
+
   await runCompatibilityQuery(
     `CREATE INDEX IF NOT EXISTS package_cycle_idx ON public.package (cycle_id)`,
     'package_cycle_idx',
