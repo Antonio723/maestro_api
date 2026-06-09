@@ -1,0 +1,50 @@
+ETIQUETAGEM - AGENTE DE IMPRESSAO (Python / EXE)
+================================================
+
+O que e: roda na maquina Windows da estacao, recebe as etiquetas do navegador e
+imprime CRU na impressora compartilhada escolhida - sem janela de impressao.
+
+Diferenca para o agente PowerShell: este agente guarda o ENCAIXE em memoria. Ao
+selecionar a OS, a tela envia o encaixe inteiro UMA vez (/load). Depois, a cada
+clique, a tela manda so a chave da peca e o AGENTE monta o ZPL - payload minimo,
+sem reenviar o desenho por clique. Junto com a marcacao otimista na tela (a peca
+fica preenchida na hora), isso elimina a espera entre o clique e a impressao.
+
+PRE-REQUISITO: Python 3 instalado nesta estacao (na instalacao, marque
+"Add Python to PATH"). Baixe em https://www.python.org/downloads/
+
+----------------------------------------------------------------------------
+COMO USAR (uma vez)
+----------------------------------------------------------------------------
+1) Compartilhe a impressora no Windows com um nome SEM espacos (ex.: ZEBRA_RAW1):
+   Painel de Controle > Dispositivos e Impressoras > botao direito > Propriedades
+   da impressora > aba Compartilhamento > marque Compartilhar e defina o nome.
+2) RODAR EM SEGUNDO PLANO (recomendado): de dois cliques em
+   "instalar-no-inicio.bat". O agente passa a rodar OCULTO (via pythonw, sem
+   janela para fechar por acidente) e sobe sozinho toda vez que o Windows liga.
+   Ja inicia na hora.
+   - Para desativar: dois cliques em "remover-do-inicio.bat".
+   (Se preferir ver a janela: use "iniciar-agente.bat" - mas nao feche a janela,
+    senao o agente para.)
+3) Na tela de Etiquetagem > Configuracoes > Impressora, cole o NOME DE
+   COMPARTILHAMENTO da impressora (ex.: ZEBRA_RAW1) e clique em Testar.
+
+----------------------------------------------------------------------------
+GERAR UM EXE (opcional - so se NAO quiser depender do Python na estacao)
+----------------------------------------------------------------------------
+Rode "build-exe.bat" numa maquina com Python (gera dist\OrquestraAgenteImpressao
+com --onedir). ATENCAO: a frota usa Bitdefender (EDR) e EXE PyInstaller NAO
+ASSINADO costuma ser barrado/posto em quarentena ("Acesso negado" ao abrir).
+Para distribuir o EXE: ASSINAR com o certificado da empresa OU pedir allowlist
+ao TI. Por isso, na frota, o caminho Python acima e o mais simples.
+
+----------------------------------------------------------------------------
+DETALHES
+----------------------------------------------------------------------------
+- Porta: variavel de ambiente ORQ_AGENT_PORT (padrao 9110).
+- Escuta SOMENTE em 127.0.0.1 (so o navegador da propria maquina o acessa).
+- Impressao crua: copy /b para \\host\compartilhamento (mesmo metodo do agente PS).
+- Para o ZPL sair perfeito, use driver que aceita dados crus (ZDesigner ZPL da
+  Zebra compartilhado, ou "Generic / Text Only"). Drivers comuns podem borrar.
+- Endpoints: GET /health, GET /printers, POST /load {fileName,items},
+  POST /print {key|zpl, printer, host}.
