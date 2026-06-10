@@ -7,6 +7,8 @@ import {
   deleteCuttingRecord,
   getMetadata,
   backfillJiraKeys,
+  getComtecCuttingReport,
+  getCuttingReportFilters,
 } from '../controllers/cuttingController.js';
 import { openAuth } from '../middleware/optionalAuth.js';
 
@@ -18,6 +20,9 @@ const router = express.Router();
 
 // Rotas estáticas antes de "/:id" para evitar colisão com :id
 router.get('/metadata', openAuth, getMetadata);
+
+router.get('/relatorio-comtec/filters', openAuth, getCuttingReportFilters);
+router.get('/relatorio-comtec', openAuth, getComtecCuttingReport);
 
 router.post('/backfill-jira-keys', openAuth, backfillJiraKeys);
 

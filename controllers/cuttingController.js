@@ -215,6 +215,18 @@ async function validateAndNormalize(client, consumption, material) {
   const aramida = isAramida(material);
   const opera = isOpera(consumption.supplier);
 
+  // Lote (batch_number) é obrigatório para TODO consumo (ARAMIDA e Tensylon) —
+  // sem ele o consumo entra no relatório de corte sem lote. Camadas continua
+  // obrigatório só para ARAMIDA (Tensylon não tem camadas de enfesto).
+  {
+    const batch = (consumption.batchNumber ?? '').toString().trim();
+    if (!batch) {
+      const err = new Error('Lote é obrigatório para o consumo.');
+      err.status = 400;
+      throw err;
+    }
+  }
+
   if (aramida && opera && consumption.plateId != null) {
     const { rows } = await client.query(
       'SELECT layers, status, actual_size, init_size FROM public.plates WHERE id = $1 FOR UPDATE',
@@ -248,6 +260,13 @@ async function validateAndNormalize(client, consumption, material) {
       err.status = 400;
       throw err;
     }
+    // Camadas vêm da placa. Se a placa não tem layers definido, o consumo
+    // ficaria sem camada — bloqueia em vez de gravar "null"/vazio.
+    if (plate.layers == null || String(plate.layers).trim() === '') {
+      const err = new Error(`Placa ${consumption.plateId} não tem camadas definidas.`);
+      err.status = 400;
+      throw err;
+    }
     consumption.layerQuantity = String(plate.layers);
   } else {
     consumption.plateId = null;
@@ -256,6 +275,16 @@ async function validateAndNormalize(client, consumption, material) {
       const err = new Error('Used metrage must be greater than zero');
       err.status = 400;
       throw err;
+    }
+    // ARAMIDA manual (não-OPERA, ou OPERA sem placa): camadas é obrigatório e
+    // deve ser numérico. Tensylon segue isento.
+    if (aramida) {
+      const layers = (consumption.layerQuantity ?? '').toString().trim();
+      if (!/^[0-9]+$/.test(layers)) {
+        const err = new Error('Camadas é obrigatório (numérico) para consumos de ARAMIDA.');
+        err.status = 400;
+        throw err;
+      }
     }
   }
 }
@@ -570,6 +599,228 @@ export const deleteCuttingRecord = async (req, res) => {
     return res.status(error.status || 500).json({ success: false, message: error.message });
   } finally {
     client.release();
+  }
+};
+
+// CTE base + calc do relatório de corte (cálculo de m² com e sem taxa de aramida
+// — espelha a query de fechamento do PCP). As condições de filtro são
+// parametrizadas ($1, $2, ...) e injetadas no WHERE da CTE `base`. Reaproveitada
+// tanto pela agregação por OS quanto pelo resumo por camadas.
+function cuttingReportCte(whereConds) {
+  const whereClause = whereConds.length ? `WHERE ${whereConds.join(' AND ')}` : '';
+  return `
+    WITH base AS (
+      SELECT
+        cr.order_number                          AS os,
+        cr.order_description                     AS descricao,
+        cr.seal                                  AS lacre,
+        cr.material,
+        cr.production_date                       AS data_producao,
+        pc.id                                    AS consumo_id,
+        pc.supplier                              AS fornecedor,
+        pc.batch_number                          AS lote,
+        w.lote                                   AS lote_placa,
+        pc.layer_quantity                        AS camadas,
+        pc.used_metrage                          AS metragem_mm,
+        CASE
+          WHEN upper(pc.supplier) = 'COMTEC' THEN 1.5
+          ELSE 1.6
+        END AS largura_m
+      FROM public.cutting_records cr
+      JOIN public.plate_consumptions pc
+        ON pc.cutting_record_id = cr.id
+      LEFT JOIN public.plates p
+        ON p.id = pc.plate_id
+      LEFT JOIN public.workorder_table w
+        ON w.id = p.workorderid
+      ${whereClause}
+    ),
+    calc AS (
+      SELECT
+        *,
+        round(
+          (COALESCE(metragem_mm, 0) / 1000.0 * largura_m)::numeric,
+          3
+        ) AS m2_sem_taxa,
+        round((
+          COALESCE(metragem_mm, 0) / 1000.0 * largura_m
+          + CASE
+              WHEN upper(material) <> 'ARAMIDA' THEN 0
+              WHEN upper(fornecedor) = 'COMTEC' THEN
+                CASE
+                  WHEN metragem_mm < 2490 THEN 0.0075
+                  WHEN metragem_mm < 4980 THEN 0.0225
+                  WHEN metragem_mm < 7470 THEN 0.0375
+                  WHEN metragem_mm < 9690 THEN 0.0525
+                  ELSE 0
+                END
+              ELSE
+                CASE
+                  WHEN metragem_mm < 2990  THEN 0.008
+                  WHEN metragem_mm < 5980  THEN 0.024
+                  WHEN metragem_mm < 8970  THEN 0.040
+                  WHEN metragem_mm < 11960 THEN 0.056
+                  WHEN metragem_mm < 14950 THEN 0.064
+                  ELSE 0
+                END
+            END
+        )::numeric, 3) AS m2_com_taxa
+      FROM base
+    )
+  `;
+}
+
+// Query principal: linhas agregadas por OS. `camadas_m2` traz o m² da OS quebrado
+// por camada (objeto JSON { "8": 1.5, "9": 10.469, ... }) — o front usa isso para
+// montar as colunas dinâmicas "8C m²", "9C m²", etc.
+function buildCuttingReportSql(whereConds) {
+  return `
+    ${cuttingReportCte(whereConds)},
+    por_os_camada AS (
+      SELECT
+        os, descricao, lacre, material, data_producao,
+        COALESCE(camadas, 'N/D') AS camada_key,
+        SUM(m2_sem_taxa)         AS m2_camada
+      FROM calc
+      GROUP BY os, descricao, lacre, material, data_producao, COALESCE(camadas, 'N/D')
+    )
+    SELECT
+      c.os,
+      c.descricao,
+      c.lacre,
+      c.material,
+      to_char(c.data_producao, 'DD/MM/YYYY') AS data_producao,
+      STRING_AGG(DISTINCT c.fornecedor, ' | ' ORDER BY c.fornecedor) AS fornecedor,
+      STRING_AGG(
+        c.lote || ' - ' || c.m2_sem_taxa || ' - ' || c.camadas,
+        '; '
+        ORDER BY c.consumo_id
+      ) AS lotes_m2,
+      SUM(c.m2_sem_taxa) AS total_m2,
+      SUM(c.m2_com_taxa) AS total_m2_com_taxa,
+      (
+        SELECT jsonb_object_agg(p.camada_key, p.m2_camada)
+        FROM por_os_camada p
+        WHERE p.os           IS NOT DISTINCT FROM c.os
+          AND p.descricao    IS NOT DISTINCT FROM c.descricao
+          AND p.lacre        IS NOT DISTINCT FROM c.lacre
+          AND p.material     IS NOT DISTINCT FROM c.material
+          AND p.data_producao IS NOT DISTINCT FROM c.data_producao
+      ) AS camadas_m2
+    FROM calc c
+    GROUP BY
+      c.os,
+      c.descricao,
+      c.lacre,
+      c.material,
+      c.data_producao
+    ORDER BY
+      c.os
+  `;
+}
+
+// Resumo por camadas: camadas são extraídas dinamicamente dos consumos (não
+// hardcoded), com a quantidade de consumos e o m² total de cada camada.
+// Ordena numericamente quando a camada é número (8, 9, 11), demais ao final.
+function buildCamadasSummarySql(whereConds) {
+  return `
+    ${cuttingReportCte(whereConds)}
+    SELECT
+      camadas,
+      COUNT(*)          AS quantidade,
+      SUM(m2_sem_taxa)  AS total_m2
+    FROM calc
+    GROUP BY camadas
+    ORDER BY
+      CASE WHEN camadas ~ '^[0-9]+$' THEN camadas::int ELSE 2147483647 END,
+      camadas
+  `;
+}
+
+// GET /cutting/relatorio-comtec — relatório de corte agregado por OS.
+// Query params (todos opcionais):
+//   startDate / endDate — YYYY-MM-DD, filtra production_date (inclusive).
+//   suppliers           — lista CSV de fornecedores; vazio = todos.
+//   lote                — filtra um lote (batch_number) específico.
+// Retorna { success, data, resumoCamadas, camadas }; o front monta o Excel
+// (aba DADOS com colunas dinâmicas de m² por camada + aba de resumo).
+export const getComtecCuttingReport = async (req, res) => {
+  try {
+    const { startDate, endDate, suppliers, lote } = req.query;
+    const params = [];
+    const conds = [];
+
+    const supplierList = suppliers
+      ? String(suppliers).split(',').map((s) => s.trim()).filter(Boolean)
+      : [];
+    if (supplierList.length > 0) {
+      params.push(supplierList.map((s) => s.toUpperCase()));
+      conds.push(`upper(pc.supplier) = ANY($${params.length})`);
+    }
+    if (startDate) {
+      params.push(startDate);
+      conds.push(`cr.production_date::date >= $${params.length}`);
+    }
+    if (endDate) {
+      params.push(endDate);
+      conds.push(`cr.production_date::date <= $${params.length}`);
+    }
+    if (lote && String(lote).trim()) {
+      params.push(String(lote).trim());
+      conds.push(`upper(pc.batch_number) = upper($${params.length})`);
+    }
+
+    const [main, resumo] = await Promise.all([
+      pool.query(buildCuttingReportSql(conds), params),
+      pool.query(buildCamadasSummarySql(conds), params),
+    ]);
+
+    const data = main.rows.map((r) => ({
+      os: r.os,
+      descricao: r.descricao,
+      lacre: r.lacre,
+      material: r.material,
+      dataProducao: r.data_producao,
+      fornecedor: r.fornecedor,
+      lotesM2: r.lotes_m2,
+      totalM2: r.total_m2 == null ? 0 : Number(r.total_m2),
+      totalM2ComTaxa: r.total_m2_com_taxa == null ? 0 : Number(r.total_m2_com_taxa),
+      // { "8": 1.5, "9": 10.469, ... } → m² da OS por camada
+      camadasM2: Object.fromEntries(
+        Object.entries(r.camadas_m2 || {}).map(([k, v]) => [k, Number(v)]),
+      ),
+    }));
+
+    const resumoCamadas = resumo.rows.map((r) => ({
+      camadas: r.camadas == null ? 'N/D' : String(r.camadas),
+      quantidade: Number(r.quantidade),
+      totalM2: r.total_m2 == null ? 0 : Number(r.total_m2),
+    }));
+
+    // Lista ordenada de camadas distintas — define a ordem das colunas no Excel.
+    const camadas = resumoCamadas.map((r) => r.camadas);
+
+    return res.json({ success: true, data, resumoCamadas, camadas });
+  } catch (error) {
+    console.error('[Cutting] getComtecCuttingReport error:', error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// GET /cutting/relatorio-comtec/filters — opções para o popup de filtros do
+// relatório: fornecedores distintos presentes nos consumos de placa.
+export const getCuttingReportFilters = async (_req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT DISTINCT upper(supplier) AS supplier
+         FROM public.plate_consumptions
+        WHERE supplier IS NOT NULL AND btrim(supplier) <> ''
+        ORDER BY 1`,
+    );
+    return res.json({ success: true, data: { suppliers: rows.map((r) => r.supplier) } });
+  } catch (error) {
+    console.error('[Cutting] getCuttingReportFilters error:', error);
+    return res.status(500).json({ success: false, message: error.message });
   }
 };
 
