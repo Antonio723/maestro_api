@@ -434,7 +434,22 @@ async function buildRomaneioPdfOld({ deliveryDate, items }) {
   return Buffer.from(await pdf.save());
 }
 
-async function buildRomaneioPdf({ deliveryDate, items }) {
+// Linhas da tabela de itens por página do romaneio. O romaneio unificado quebra
+// em várias páginas quando passa disso.
+const ROMANEIO_ROWS_PER_PAGE = 13;
+
+function chunkArray(arr, size) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) {
+    out.push(arr.slice(i, i + size));
+  }
+  return out;
+}
+
+// Quando unified=true, gera UM romaneio com todos os itens listados na tabela
+// (quebrando em páginas de ROMANEIO_ROWS_PER_PAGE). Caso contrário, mantém o
+// comportamento atual: uma página por item (uma linha preenchida).
+async function buildRomaneioPdf({ deliveryDate, items, unified = false }) {
   const pdf = await PDFDocument.create();
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
@@ -623,7 +638,11 @@ async function buildRomaneioPdf({ deliveryDate, items }) {
     drawCentered(page, 'Assinatura', x + dateW + responsibleW, y + h - 9, signW, { size: 6.5, bold: true });
   }
 
-  for (const item of items) {
+  const pageGroups = unified
+    ? chunkArray(items, ROMANEIO_ROWS_PER_PAGE)
+    : items.map((it) => [it]);
+
+  for (const pageItems of pageGroups) {
     const page = pdf.addPage(pageSize);
 
     rect(page, margin, bottom, contentW, height - margin * 2);
@@ -655,7 +674,7 @@ async function buildRomaneioPdf({ deliveryDate, items }) {
       bold: true,
       color: muted,
     });
-    drawText(page, item.osNumber || '-', infoX + 6, headerY + headerH - 24, {
+    drawText(page, unified ? 'UNIFICADO' : (pageItems[0]?.osNumber || '-'), infoX + 6, headerY + headerH - 24, {
       size: 13,
       bold: true,
     });
@@ -707,7 +726,7 @@ async function buildRomaneioPdf({ deliveryDate, items }) {
     // =========================
     const tableHeaderH = 22;
     const rowH = 30;
-    const rows = 13;
+    const rows = ROMANEIO_ROWS_PER_PAGE;
     const tableTop = destY;
     const tableBottom = tableTop - tableHeaderH - rows * rowH;
     const tableW = contentW;
@@ -740,20 +759,22 @@ async function buildRomaneioPdf({ deliveryDate, items }) {
       drawCentered(page, String(i + 1), xItem, y + 11, colItem, { size: 7.5, bold: true, color: muted });
     }
 
-    const firstRowY = tableTop - tableHeaderH - rowH;
-    drawCentered(page, item.osNumber || '-', xOs, firstRowY + 11, colOs, { size: 8, bold: true });
-    drawCentered(page, item.project || '-', xProject, firstRowY + 11, colProject, { size: 8 });
-    // Material do kit produzido (ex.: ARAMIDA / TENSYLON) — substitui a antiga coluna NF.
-    drawCentered(page, (item.material || '-').toUpperCase(), xNf, firstRowY + 11, colNf, { size: 8, bold: true });
+    pageItems.forEach((it, rowIndex) => {
+      const rowY = tableTop - tableHeaderH - (rowIndex + 1) * rowH;
+      drawCentered(page, it.osNumber || '-', xOs, rowY + 11, colOs, { size: 8, bold: true });
+      drawCentered(page, it.project || '-', xProject, rowY + 11, colProject, { size: 8 });
+      // Material do kit produzido (ex.: ARAMIDA / TENSYLON) — substitui a antiga coluna NF.
+      drawCentered(page, (it.material || '-').toUpperCase(), xNf, rowY + 11, colNf, { size: 8, bold: true });
 
-    const descLines = wrapText(item.description || '-', font, 7.5, colDesc - 10).slice(0, 2);
-    if (descLines.length === 1) {
-      drawCentered(page, descLines[0], xDesc + 5, firstRowY + 11, colDesc - 10, { size: 7.5 });
-    } else {
-      descLines.forEach((text, idx) => {
-        drawCentered(page, text, xDesc + 5, firstRowY + 17 - idx * 10, colDesc - 10, { size: 7.5 });
-      });
-    }
+      const descLines = wrapText(it.description || '-', font, 7.5, colDesc - 10).slice(0, 2);
+      if (descLines.length === 1) {
+        drawCentered(page, descLines[0], xDesc + 5, rowY + 11, colDesc - 10, { size: 7.5 });
+      } else {
+        descLines.forEach((text, idx) => {
+          drawCentered(page, text, xDesc + 5, rowY + 17 - idx * 10, colDesc - 10, { size: 7.5 });
+        });
+      }
+    });
 
     // =========================
     // OBSERVAÇÕES
@@ -848,6 +869,9 @@ export const gerarRomaneioCorte = async (req, res) => {
     const zip = new JSZip();
     const failures = [];
     const printedEntries = [];
+    // Itens (já enriquecidos com projeto/descrição do Jira) que entraram no ZIP,
+    // usados para montar o romaneio unificado ao final.
+    const unifiedItems = [];
     const printedAt = new Date().toISOString();
     const userId = req.user?.id || req.user?.userId || null;
 
@@ -933,6 +957,7 @@ export const gerarRomaneioCorte = async (req, res) => {
         }
 
         zip.file(fileName, pdfBuffer);
+        unifiedItems.push(item);
 
         printedEntries.push({
           osNumber,
@@ -983,6 +1008,24 @@ export const gerarRomaneioCorte = async (req, res) => {
     }
 
     await appendPrintedLog(printedEntries);
+
+    // Romaneio unificado: um único PDF com todas as OS selecionadas em tabela.
+    // Só faz sentido com 2+ itens (com 1, seria idêntico ao individual).
+    if (unifiedItems.length >= 2) {
+      try {
+        const unifiedBuffer = await buildRomaneioPdf({
+          deliveryDate,
+          items: unifiedItems,
+          unified: true,
+        });
+        const unifiedDate = sanitizeFileName(String(deliveryDate).slice(0, 10)) || 'entrega';
+        zip.file(`romaneio-UNIFICADO-${unifiedDate}.pdf`, unifiedBuffer);
+      } catch (error) {
+        console.warn(
+          `[cuttingRomaneio] Falha ao gerar romaneio unificado: ${error.message}`,
+        );
+      }
+    }
 
     const zipBuffer = await zip.generateAsync({
       type: 'nodebuffer',
