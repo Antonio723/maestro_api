@@ -9,6 +9,7 @@ import {
   backfillJiraKeys,
   getComtecCuttingReport,
   getCuttingReportFilters,
+  getFaturamentoReport,
 } from '../controllers/cuttingController.js';
 import { openAuth } from '../middleware/optionalAuth.js';
 
@@ -23,6 +24,7 @@ router.get('/metadata', openAuth, getMetadata);
 
 router.get('/relatorio-comtec/filters', openAuth, getCuttingReportFilters);
 router.get('/relatorio-comtec', openAuth, getComtecCuttingReport);
+router.get('/relatorio-faturamento', openAuth, getFaturamentoReport);
 
 router.post('/backfill-jira-keys', openAuth, backfillJiraKeys);
 

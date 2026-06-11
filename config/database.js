@@ -1096,9 +1096,20 @@ async function ensureCarbonSharedTables() {
       layer_quantity    VARCHAR(40) NOT NULL,
       manual_batch      BOOLEAN NOT NULL,
       plate_id          BIGINT REFERENCES public.plates(id),
-      cutting_record_id BIGINT NOT NULL REFERENCES public.cutting_records(id) ON DELETE CASCADE
+      cutting_record_id BIGINT NOT NULL REFERENCES public.cutting_records(id) ON DELETE CASCADE,
+      square_meters     NUMERIC,
+      waste_metrage     NUMERIC NOT NULL DEFAULT 0
     )
   `, 'public.plate_consumptions');
+
+  // m² persistido (com desperdício embutido) + mm de desperdício baixado do
+  // saldo. Idempotente p/ bancos que criaram a tabela antes destas colunas.
+  await runCompatibilityQuery(
+    `ALTER TABLE public.plate_consumptions
+       ADD COLUMN IF NOT EXISTS square_meters NUMERIC,
+       ADD COLUMN IF NOT EXISTS waste_metrage NUMERIC NOT NULL DEFAULT 0`,
+    'plate_consumptions.square_meters/waste_metrage',
+  );
 
   await runCompatibilityQuery(
     `CREATE INDEX IF NOT EXISTS plate_consumptions_record_idx

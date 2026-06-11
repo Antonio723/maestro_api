@@ -14,6 +14,19 @@ const TENSYLON_TYPES = ['30A', '40A'];
 const isAramida = (material) => material === 'ARAMIDA';
 const isOpera = (supplier) => supplier === 'OPERA';
 
+// Desperdício físico de corte: 5 cm (50 mm) é descontado do saldo quando o
+// consumo deixa sobra (saldo restante > 0). Consumo total não leva desperdício.
+const WASTE_MM = 50;
+
+// Largura do material (m) por fornecedor, p/ cálculo de m². PROTECTA = 1,5;
+// OPERA/COMTEC = 1,6. (Espelha calcConsumptionArea do front.)
+const larguraFor = (supplier) =>
+  String(supplier || '').toUpperCase() === 'PROTECTA' ? 1.5 : 1.6;
+
+// m² do consumo com o desperdício embutido. round 3 casas, igual aos relatórios.
+const squareMetersFor = (usedMetrage, wasteMm, supplier) =>
+  Math.round(((Number(usedMetrage) + Number(wasteMm)) / 1000) * larguraFor(supplier) * 1000) / 1000;
+
 // Extrai YYYY-MM-DD de qualquer forma plausível ("2026-05-28",
 // "2026-05-28T00:00:00.000Z", Date). Retorna null se não conseguir parsear.
 // Usado para evitar shift de TZ na coluna production_date (TIMESTAMP s/ TZ).
@@ -40,6 +53,8 @@ const CONSUMPTIONS_JSON_SUB = `
     SELECT json_agg(json_build_object(
       'id',               pc.id,
       'usedMetrage',      pc.used_metrage::float8,
+      'squareMeters',     pc.square_meters::float8,
+      'wasteMetrage',     pc.waste_metrage::float8,
       'supplier',         pc.supplier,
       'layerQuantity',    pc.layer_quantity,
       'manualBatch',      pc.manual_batch,
@@ -106,6 +121,8 @@ function mapCuttingRecord(row) {
     consumptions: (row.consumptions || []).map((c) => ({
       id: c.id == null ? null : Number(c.id),
       usedMetrage: c.usedMetrage == null ? null : Number(c.usedMetrage),
+      squareMeters: c.squareMeters == null ? null : Number(c.squareMeters),
+      wasteMetrage: c.wasteMetrage == null ? null : Number(c.wasteMetrage),
       supplier: c.supplier,
       layerQuantity: c.layerQuantity,
       manualBatch: c.manualBatch,
@@ -300,31 +317,57 @@ async function insertConsumption(client, consumption, recordId, material) {
     ? Number(consumption.plateId)
     : null;
 
+  const used = Number(consumption.usedMetrage);
+
+  // Desperdício de 5 cm aplicado quando o consumo deixa sobra no saldo.
+  // OPERA+placa: o saldo (mm) é autoritativo no backend — calcula a sobra a
+  // partir do actual_size atual da placa (limita o desperdício à sobra p/ não
+  // deixar o saldo negativo). Não-OPERA/manual: usa o flag leavesRemnant
+  // enviado pelo front (que conhece o saldo do painel em m²).
+  let wasteMm = 0;
+  let available = null;
+  if (plateId != null) {
+    const cur = await client.query(
+      'SELECT actual_size FROM public.plates WHERE id = $1 FOR UPDATE',
+      [plateId],
+    );
+    available = Number(cur.rows[0]?.actual_size ?? 0);
+    const remnant = available - used;
+    wasteMm = remnant > 0 ? Math.min(WASTE_MM, remnant) : 0;
+  } else {
+    wasteMm = consumption.leavesRemnant === false ? 0 : WASTE_MM;
+  }
+
+  const squareMeters = squareMetersFor(used, wasteMm, consumption.supplier);
+
   const { rows } = await client.query(
     `INSERT INTO public.plate_consumptions
-      (used_metrage, batch_number, supplier, layer_quantity, manual_batch, plate_id, cutting_record_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
+      (used_metrage, batch_number, supplier, layer_quantity, manual_batch, plate_id, cutting_record_id, square_meters, waste_metrage)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
      RETURNING id`,
     [
-      Number(consumption.usedMetrage),
+      used,
       consumption.batchNumber || null,
       consumption.supplier,
       consumption.layerQuantity,
       manualBatch,
       plateId,
       recordId,
+      squareMeters,
+      wasteMm,
     ],
   );
   const consumptionId = Number(rows[0].id);
 
   if (aramida && opera && plateId != null) {
+    const totalRemoved = used + wasteMm;
     await client.query(
       `INSERT INTO public.plate_event
         (plate_id, event_type, event_date, consumed_area, description, consumption_reference_id)
        VALUES ($1, 'USO_CORTE', now(), $2, $3, $4)`,
       [
         plateId,
-        Number(consumption.usedMetrage),
+        totalRemoved,
         `Consumo em corte - Apontamento: ${recordId}, Consumo: ${consumptionId}`,
         consumptionId,
       ],
@@ -334,7 +377,7 @@ async function insertConsumption(client, consumption, recordId, material) {
           SET actual_size = COALESCE(actual_size, 0) - $1
         WHERE id = $2
         RETURNING actual_size, init_size`,
-      [Number(consumption.usedMetrage), plateId],
+      [totalRemoved, plateId],
     );
     const { actual_size, init_size } = updated.rows[0];
     const nextStatus = deriveStatusFromSize(actual_size, init_size);
@@ -351,19 +394,22 @@ async function insertConsumption(client, consumption, recordId, material) {
 // (não apagar o evento — §5.3 da spec exige histórico). Usado em update + delete.
 async function revertConsumptions(client, recordId) {
   const { rows } = await client.query(
-    `SELECT id, plate_id, used_metrage
+    `SELECT id, plate_id, used_metrage, waste_metrage
        FROM public.plate_consumptions
       WHERE cutting_record_id = $1`,
     [recordId],
   );
   for (const c of rows) {
     if (c.plate_id != null) {
+      // Estorna o total que foi baixado: metragem usada + desperdício. Sem o
+      // waste, os 5 cm ficariam "presos" na placa a cada edição.
+      const totalRemoved = Number(c.used_metrage) + Number(c.waste_metrage || 0);
       const updated = await client.query(
         `UPDATE public.plates
             SET actual_size = COALESCE(actual_size, 0) + $1
           WHERE id = $2
           RETURNING actual_size, init_size`,
-        [Number(c.used_metrage), c.plate_id],
+        [totalRemoved, c.plate_id],
       );
       const { actual_size, init_size } = updated.rows[0];
       const nextStatus = deriveStatusFromSize(actual_size, init_size);
@@ -377,7 +423,7 @@ async function revertConsumptions(client, recordId) {
          VALUES ($1, 'CANCELAMENTO_DE_CONSUMO', now(), $2, $3, $4)`,
         [
           c.plate_id,
-          Number(c.used_metrage),
+          totalRemoved,
           `Cancelamento de consumo - Apontamento: ${recordId}, Consumo: ${c.id}`,
           c.id,
         ],
@@ -623,7 +669,7 @@ function cuttingReportCte(whereConds) {
         pc.layer_quantity                        AS camadas,
         pc.used_metrage                          AS metragem_mm,
         CASE
-          WHEN upper(pc.supplier) = 'COMTEC' THEN 1.5
+          WHEN upper(pc.supplier) = 'PROTECTA' THEN 1.5
           ELSE 1.6
         END AS largura_m
       FROM public.cutting_records cr
@@ -737,6 +783,34 @@ function buildCamadasSummarySql(whereConds) {
   `;
 }
 
+// Query de faturamento: uma linha por (OS, fornecedor, camadas, lote) — que é
+// exatamente uma linha de produto na nota fiscal. Soma o m² (sem taxa) de todos
+// os consumos daquele agrupamento. Ordena por OS e, dentro da OS, por
+// fornecedor/camadas/lote para casar com a ordem de digitação na NF.
+function buildFaturamentoSql(whereConds) {
+  return `
+    ${cuttingReportCte(whereConds)}
+    SELECT
+      os,
+      descricao,
+      lacre,
+      material,
+      to_char(data_producao, 'DD/MM/YYYY') AS data_producao,
+      fornecedor,
+      COALESCE(camadas, 'N/D')             AS camadas,
+      lote,
+      SUM(m2_sem_taxa)                     AS m2,
+      COUNT(*)                             AS qtd_consumos
+    FROM calc
+    GROUP BY os, descricao, lacre, material, data_producao, fornecedor, COALESCE(camadas, 'N/D'), lote
+    ORDER BY
+      os,
+      fornecedor,
+      CASE WHEN COALESCE(camadas, 'N/D') ~ '^[0-9]+$' THEN camadas::int ELSE 2147483647 END,
+      lote
+  `;
+}
+
 // GET /cutting/relatorio-comtec — relatório de corte agregado por OS.
 // Query params (todos opcionais):
 //   startDate / endDate — YYYY-MM-DD, filtra production_date (inclusive).
@@ -803,6 +877,58 @@ export const getComtecCuttingReport = async (req, res) => {
     return res.json({ success: true, data, resumoCamadas, camadas });
   } catch (error) {
     console.error('[Cutting] getComtecCuttingReport error:', error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// GET /cutting/relatorio-faturamento — agrupamento para emissão de NF.
+// Mesmos filtros do relatório de corte (startDate/endDate/suppliers/lote).
+// Retorna { success, data } onde cada item é uma linha de produto da nota:
+// { os, descricao, fornecedor, camadas, lote, m2 }.
+export const getFaturamentoReport = async (req, res) => {
+  try {
+    const { startDate, endDate, suppliers, lote } = req.query;
+    const params = [];
+    const conds = [];
+
+    const supplierList = suppliers
+      ? String(suppliers).split(',').map((s) => s.trim()).filter(Boolean)
+      : [];
+    if (supplierList.length > 0) {
+      params.push(supplierList.map((s) => s.toUpperCase()));
+      conds.push(`upper(pc.supplier) = ANY($${params.length})`);
+    }
+    if (startDate) {
+      params.push(startDate);
+      conds.push(`cr.production_date::date >= $${params.length}`);
+    }
+    if (endDate) {
+      params.push(endDate);
+      conds.push(`cr.production_date::date <= $${params.length}`);
+    }
+    if (lote && String(lote).trim()) {
+      params.push(String(lote).trim());
+      conds.push(`upper(pc.batch_number) = upper($${params.length})`);
+    }
+
+    const { rows } = await pool.query(buildFaturamentoSql(conds), params);
+
+    const data = rows.map((r) => ({
+      os: r.os,
+      descricao: r.descricao,
+      lacre: r.lacre,
+      material: r.material,
+      dataProducao: r.data_producao,
+      fornecedor: r.fornecedor,
+      camadas: r.camadas == null ? 'N/D' : String(r.camadas),
+      lote: r.lote,
+      m2: r.m2 == null ? 0 : Number(r.m2),
+      qtdConsumos: Number(r.qtd_consumos),
+    }));
+
+    return res.json({ success: true, data });
+  } catch (error) {
+    console.error('[Cutting] getFaturamentoReport error:', error);
     return res.status(500).json({ success: false, message: error.message });
   }
 };
