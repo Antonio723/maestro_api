@@ -3,13 +3,14 @@ import {
   gerarRomaneioCorte,
   listarRomaneiosImpressos,
 } from '../controllers/cuttingRomaneioController.js';
-import { openAuth } from '../middleware/optionalAuth.js';
+import { authenticate } from '../middleware/auth.js';
 
 const router = express.Router();
 
-// ⚠️ HOTFIX ACESSO ABERTO: romaneio de corte (gerar/listar) usado pela tela de
-// Corte, liberado sem login (openAuth). Ver middleware/optionalAuth.js.
-router.get('/printed', openAuth, listarRomaneiosImpressos);
-router.post('/', openAuth, gerarRomaneioCorte);
+// Romaneio de corte é visível/emitido apenas por usuários logados — exige
+// autenticação. A tela de Corte em si segue aberta (openAuth), mas estes
+// endpoints não.
+router.get('/printed', authenticate, listarRomaneiosImpressos);
+router.post('/', authenticate, gerarRomaneioCorte);
 
 export default router;
