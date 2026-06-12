@@ -27,6 +27,7 @@ import {
   obterMarcasUnicas
 } from '../controllers/jiraController.js';
 import { attachNf, attachNfStatus } from '../controllers/jiraAttachController.js';
+import { getDashboardProcessos } from '../controllers/dashboardProcessosController.js';
 import { authenticate } from '../middleware/auth.js';
 import { requirePermission } from '../middleware/rbac.js';
 
@@ -43,6 +44,7 @@ router.get('/pcp-relatorio',   authenticate, requirePermission('pcp_reports', 'r
 router.get('/manta-relatorio', authenticate, requirePermission('pcp_reports', 'read'),  getMantaRelatorio);
 router.get('/carbon-relatorio',        authenticate, requirePermission('pcp_reports', 'read'),  getCarbonRelatorio);
 router.get('/carbon-relatorio/status', authenticate, requirePermission('pcp_reports', 'read'),  getCarbonRelatorioStatus);
+router.get('/dashboard-processos',     authenticate, requirePermission('pcp_reports', 'read'),  getDashboardProcessos);
 router.post('/reprogramar-massa',          authenticate, requirePermission('pcp_orders', 'update'), reprogramarEmMassa);
 router.post('/atualizar-datas-individuais', authenticate, requirePermission('pcp_orders', 'update'), atualizarDatasIndividuais);
 router.post('/buscar-arquivos',            authenticate, requirePermission('pcp_orders', 'read'),   buscarArquivosPorIds);

@@ -1680,6 +1680,138 @@ async function ensureRbacTables() {
       ON maestro.access_audit (created_at DESC)
   `, 'idx_access_audit_created');
 
+  // Geolocalização (aproximada, por IP) de quem acessa o site. Alimentada pelo
+  // middleware accessGeoLogger e consultada na página de Auditoria > Localização.
+  await runCompatibilityQuery(`
+    CREATE TABLE IF NOT EXISTS maestro.access_geo (
+      id           BIGSERIAL PRIMARY KEY,
+      ip           VARCHAR(60) NOT NULL,
+      city         VARCHAR(120),
+      region       VARCHAR(120),
+      country      VARCHAR(120),
+      country_code VARCHAR(4),
+      lat          DOUBLE PRECISION,
+      lon          DOUBLE PRECISION,
+      isp          VARCHAR(200),
+      user_email   VARCHAR(255),
+      user_agent   TEXT,
+      path         VARCHAR(300),
+      created_at   TIMESTAMP NOT NULL DEFAULT now()
+    )
+  `, 'maestro.access_geo');
+
+  await runCompatibilityQuery(`
+    CREATE INDEX IF NOT EXISTS idx_access_geo_created
+      ON maestro.access_geo (created_at DESC)
+  `, 'idx_access_geo_created');
+
+  await runCompatibilityQuery(`
+    CREATE INDEX IF NOT EXISTS idx_access_geo_country
+      ON maestro.access_geo (country)
+  `, 'idx_access_geo_country');
+
+  // Produção Unificada de Materiais: tabela-mãe os_snapshot (espelho do card-pai
+  // Apontamento Produção / AP) + uma tabela por material/fábrica (join solto
+  // por numero_os, sem FK rígida — crons independentes). Alimentadas pelos jobs
+  // sync_os_snapshot / sync_fabrica_<material> (ver cron_jobs/jiraFabricaSync.cjs).
+  await runCompatibilityQuery(`
+    CREATE TABLE IF NOT EXISTS maestro.os_snapshot (
+      numero_os       VARCHAR(40) PRIMARY KEY,
+      ap_key          VARCHAR(40),
+      veiculo         TEXT,
+      marca           TEXT,
+      modelo          TEXT,
+      ano             VARCHAR(20),
+      etapa           VARCHAR(120),
+      etapa_pb        VARCHAR(120),
+      status          VARCHAR(80),
+      prev_vidro      DATE,
+      prev_aco        DATE,
+      prev_manta      DATE,
+      prev_tensylon   DATE,
+      prev_sup_vidro  DATE,
+      veiculo_compras    TEXT,
+      cor                TEXT,
+      blindagem          TEXT,
+      chassi             VARCHAR(40),
+      parceiro           TEXT,
+      data_pedido        DATE,
+      data_recebimento   DATE,
+      data_contrato      DATE,
+      prazo_contrato     VARCHAR(20),
+      liberacao_exercito DATE,
+      obs                TEXT,
+      last_updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `, 'maestro.os_snapshot');
+
+  // Colunas do Dashboard de Processos (adicionadas após a v1 da os_snapshot).
+  // Idempotente: ADD COLUMN IF NOT EXISTS não falha em tabela já existente.
+  await runCompatibilityQuery(`
+    ALTER TABLE maestro.os_snapshot
+      ADD COLUMN IF NOT EXISTS etapa_pb           VARCHAR(120),
+      ADD COLUMN IF NOT EXISTS veiculo_compras    TEXT,
+      ADD COLUMN IF NOT EXISTS cor                TEXT,
+      ADD COLUMN IF NOT EXISTS blindagem          TEXT,
+      ADD COLUMN IF NOT EXISTS chassi             VARCHAR(40),
+      ADD COLUMN IF NOT EXISTS parceiro           TEXT,
+      ADD COLUMN IF NOT EXISTS data_pedido        DATE,
+      ADD COLUMN IF NOT EXISTS data_recebimento   DATE,
+      ADD COLUMN IF NOT EXISTS data_contrato      DATE,
+      ADD COLUMN IF NOT EXISTS prazo_contrato     VARCHAR(20),
+      ADD COLUMN IF NOT EXISTS liberacao_exercito DATE,
+      ADD COLUMN IF NOT EXISTS obs                TEXT
+  `, 'os_snapshot.dashboard_cols');
+
+  // A mãe começou como espelho do PB; o pai real é o AP. Renomeia a coluna se a
+  // tabela já existir com o nome antigo (idempotente — ignora se já for ap_key).
+  await runCompatibilityQuery(`
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+         WHERE table_schema = 'maestro' AND table_name = 'os_snapshot' AND column_name = 'pb_key'
+      ) THEN
+        ALTER TABLE maestro.os_snapshot RENAME COLUMN pb_key TO ap_key;
+      END IF;
+    END $$;
+  `, 'os_snapshot.pb_key->ap_key');
+
+  for (const m of ['vidro', 'aco', 'manta', 'tensylon', 'sup_vidro']) {
+    await runCompatibilityQuery(`
+      CREATE TABLE IF NOT EXISTS maestro.producao_${m} (
+        id              BIGSERIAL PRIMARY KEY,
+        numero_os       VARCHAR(40),
+        jira_key        VARCHAR(40) UNIQUE NOT NULL,
+        situacao        VARCHAR(120),
+        status          VARCHAR(80),
+        pedido_carbon   TEXT,
+        previsao        DATE,
+        campos          JSONB,
+        produced_at     TIMESTAMPTZ,
+        fabrica         TEXT,
+        last_updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `, `maestro.producao_${m}`);
+    await runCompatibilityQuery(
+      `CREATE INDEX IF NOT EXISTS idx_producao_${m}_os ON maestro.producao_${m} (numero_os)`,
+      `idx_producao_${m}_os`,
+    );
+    // pedido_carbon começou como VARCHAR(60); alguns cards (ACO) estouram esse
+    // tamanho. Widening idempotente para TEXT em tabelas já criadas.
+    await runCompatibilityQuery(
+      `ALTER TABLE maestro.producao_${m} ALTER COLUMN pedido_carbon TYPE TEXT`,
+      `producao_${m}.pedido_carbon->TEXT`,
+    );
+    // fabrica/fornecedor do material (só VIDRO preenche hoje — coluna "Vidro" do
+    // Dashboard de Processos). Idempotente em tabelas já criadas.
+    await runCompatibilityQuery(
+      `ALTER TABLE maestro.producao_${m} ADD COLUMN IF NOT EXISTS fabrica TEXT`,
+      `producao_${m}.fabrica`,
+    );
+  }
+
   // Overrides por usuário — deny/grant pontuais sem criar role nova (§14.6)
   await runCompatibilityQuery(`
     CREATE TABLE IF NOT EXISTS maestro.user_permission_overrides (

@@ -36,8 +36,10 @@ import invoiceRoutes from './routes/invoices.js';
 import receiptRoutes from './routes/receipt.js';
 import labelsRoutes from './routes/labels.js';
 import { ensureDatabaseCompatibility } from './config/database.js';
+import { accessGeoLogger } from './middleware/accessGeoLogger.js';
 import { loadOpeVersions } from './cron_jobs/scheduler.js';
 import { migrateLegacyCronJobs } from './cron_jobs/migrateLegacyJobs.js';
+import { seedMaterialSyncJobs } from './cron_jobs/seedMaterialSyncJobs.js';
 import { startRoleExpirationJob } from './jobs/roleExpirationJob.js';
 
 // Carregar variáveis de ambiente
@@ -71,6 +73,10 @@ app.use(cors({
 app.options('*', cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Registra (em segundo plano, sem atrasar a request) a localização por IP de
+// quem acessa a API — consultável em Auditoria > Localização.
+app.use('/api', accessGeoLogger);
 
 // Log de requisições (desenvolvimento)
 if (process.env.NODE_ENV === 'development') {
@@ -169,6 +175,7 @@ async function bootstrap() {
   try {
     await ensureDatabaseCompatibility();
     await migrateLegacyCronJobs();
+    await seedMaterialSyncJobs();
     await loadOpeVersions();
     startRoleExpirationJob();
     // O Relatório Carbon agora roda pelo scheduler central (job 'carbon_export'
