@@ -165,10 +165,33 @@ function finalizeItem(item, fileName) {
 }
 
 function extractMeta(values, fileName) {
-  const product = values.find((value) => /CARBON-/i.test(value)) || findProduct(fileName, values.join(' '));
+  // Linha estruturada da peça, ex.:
+  //   "OS: 32583 ; 08 CAMADAS ; AUDI Q8 ; CARBON - TFM05.011419.AF"
+  // Os campos vêm separados por ';' nesta ordem: OS, camadas, veículo, projeto.
   const orderLine = values.find((value) => /^OS:/i.test(value)) || '';
-  const vehicle = values.find((value) => /TOY|HON|CHEV|VOLK|FIAT|COROLLA|CIVIC|ONIX/i.test(value) && !/^OS:/i.test(value)) || '';
-  const layer = values.find((value) => /^BASE$/i.test(value) || /CAMADAS/i.test(value)) || '';
+  const segments = orderLine.split(';').map((seg) => normalizeSpaces(seg)).filter(Boolean);
+  const layersSeg = segments.find((seg) => /CAMADAS/i.test(seg)) || '';
+  const projectSeg = segments.find((seg) => /CARBON/i.test(seg)) || '';
+  // Veículo = o segmento que não é OS, nem camadas, nem projeto.
+  const vehicleSeg = segments.find(
+    (seg) => !/^OS:/i.test(seg) && !/CAMADAS/i.test(seg) && !/CARBON/i.test(seg),
+  ) || '';
+
+  // Fallbacks (heurísticos) para arquivos sem a linha estruturada por ';'.
+  const product =
+    projectSeg ||
+    values.find((value) => /CARBON-/i.test(value)) ||
+    findProduct(fileName, values.join(' '));
+  const vehicle =
+    vehicleSeg ||
+    values.find(
+      (value) =>
+        /TOY|HON|CHEV|VOLK|FIAT|AUDI|BMW|MERC|RENAULT|JEEP|COROLLA|CIVIC|ONIX/i.test(value) &&
+        !/^OS:/i.test(value),
+    ) ||
+    '';
+  const layer =
+    layersSeg || values.find((value) => /^BASE$/i.test(value) || /CAMADAS/i.test(value)) || '';
   const layers = extractLayers(orderLine || values.join(' '));
   const part = values.find((value) => /^\d{1,3}\s*-?/.test(value)) || values.find((value) => value.length > 4) || `Item ${fileName}`;
   const partMatch = part.match(/^(\d{1,3})\s*-?\s*(.+)$/);
