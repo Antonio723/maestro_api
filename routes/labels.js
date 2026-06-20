@@ -6,17 +6,20 @@ import {
   downloadZpl,
   downloadAgent,
 } from '../controllers/labelsController.js';
-import { authenticate } from '../middleware/auth.js';
-import { requirePermission } from '../middleware/rbac.js';
 
 const router = express.Router();
 
-// A impressao acontece na maquina cliente Windows via agente local. A API Linux
-// apenas entrega dados, preview e ZPL.
-router.get('/files',       authenticate, requirePermission('etiquetas', 'read'),  listFiles);
-router.get('/items',       authenticate, requirePermission('etiquetas', 'read'),  listItems);
-router.get('/preview.pdf', authenticate, requirePermission('etiquetas', 'read'),  labelPreviewPdf);
-router.get('/agent',       authenticate, requirePermission('etiquetas', 'read'),  downloadAgent);
-router.get('/zpl',         authenticate, requirePermission('etiquetas', 'print'), downloadZpl);
+// ⚠️ ACESSO ABERTO: a tela de Etiquetagem opera SEM login (estação de corte/kiosk).
+// Por isso estas rotas NÃO usam authenticate/requirePermission. A impressão
+// acontece na máquina cliente Windows via agente local; a API Linux apenas
+// entrega dados, preview e ZPL. Para reverter (re-exigir login), reaplicar:
+//   import { authenticate } from '../middleware/auth.js';
+//   import { requirePermission } from '../middleware/rbac.js';
+//   e prefixar cada rota com: authenticate, requirePermission('etiquetas', '<read|print>')
+router.get('/files',       listFiles);
+router.get('/items',       listItems);
+router.get('/preview.pdf', labelPreviewPdf);
+router.get('/agent',       downloadAgent);
+router.get('/zpl',         downloadZpl);
 
 export default router;
